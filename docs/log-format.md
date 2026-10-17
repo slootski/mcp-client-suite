@@ -2,6 +2,25 @@
 
 For a maintainer. The README links here; the CTO-level summary is there.
 
+## Files of a run
+
+Each run writes `artifacts/<run-id>/` (`<run-id>` = UTC time + pid);
+`artifacts/latest` holds the newest `<run-id>` in which at least one test
+ran.
+
+- `junit.xml` and `report.html` (one file; each test row shows its log
+  lines and links to its files).
+- `outcomes.json`: counts and node ids per outcome, xfails (known
+  defects) apart from each kind of skip (inconclusive, no key, other).
+- `suite.log`: every log line, redacted (below).
+- `cost.json` (`total_cost_usd` per model run, per test, in total) and
+  `s-rates.json` (the S rates).
+- `secret-scan.json`: the scan for the API key and test credentials (a
+  file that holds one is not kept).
+- `tests/<test id>/`: `run.json` (version, image id, env pins, the facts
+  the test saw), `commands.jsonl`, `wire-<server>.jsonl` (the fake's log),
+  and `stream-attemptN.jsonl` / `debug-attemptN.log` for `claude -p` runs.
+
 ## `suite.log`
 
 Every log line of the run, in the format

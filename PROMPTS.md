@@ -21,15 +21,12 @@ transcripts.
    reported findings by severity. Each QA's findings went into the next Dev
    prompt ("Fix first").
 5. **Repo review and fix rounds.** After the build, a hiring-panel review
-   prompt ran on the repo, twice. After each review, a repo-fix prompt was
-   given to a new session, which ran Dev and QA agents in parallel units
-   (rows 38 and 39).
+   prompt ran on the repo. After each review, a repo-fix prompt was given
+   to a new session, which ran Dev and QA agents in parallel units (rows
+   38 and 39).
 
 ## Who wrote what
 
-- **Build prompts 01 to 19 were written by the orchestrating agent**, not
-  by the candidate. The candidate wrote none of the code and none of their
-  text.
 - **Decisions that were the candidate's** (the chat messages behind them
   are in [The candidate's messages](#the-candidates-messages)):
   - The plan: its structure (one doc per topic, docs 11 to 23, every idea
@@ -46,90 +43,51 @@ transcripts.
   - The logging rule (10-17 12:01 and 12:16). Build prompts 17 to 19
     turned it into code (`harness/check.py`).
   - The hiring-panel review of the repo (10-17 13:13).
-- **Written by agents:** the code, the build prompts, and the first
-  drafts of README.md, PLAN.md and this file (build step 7).
+- **Written by agents:** the code, the build prompts 01 to 19, the Dev
+  and QA briefs of the fix rounds (not kept in the repo), and every
+  version of the docs (README.md, PLAN.md, this file, `docs/`,
+  observations.md).
 
 ## The prompts, in order
 
 | # | File | To whom | Purpose |
 |---|---|---|---|
-| 1 | `prompts/plan/00_START_HERE_—_read_this_first.md` | planning agent | Reading order for the plan folder |
-| 2 | `prompts/plan/11_Harness_and_Pinned_Config_—_MCP_Client.md` | planning agent | Harness: pinned version, env, flags, fake server, gate, known-defect rule, cost cap |
-| 3 | `prompts/plan/12_Connection_and_Handshake_—_MCP_Client.md` | planning agent | Question 1: handshake, era probe, status strings (9 ideas) |
-| 4 | `prompts/plan/13_Auth_and_Remote_Transport_—_MCP_Client.md` | planning agent | Question 1: auth, headers, credential variables, remote transport (11 ideas + 1 merged) |
-| 5 | `prompts/plan/14_Tool-Call_Smoke_—_MCP_Client.md` | planning agent | Question 2: round trip, tool search, tool names |
-| 6 | `prompts/plan/15_Right_Tool_and_Right_Arguments_—_MCP_Client.md` | planning agent | Question 2: right tool, argument and result fidelity |
-| 7 | `prompts/plan/16_Tool_Errors_—_isError_vs_Protocol_Error_—_MCP_Client.md` | planning agent | Question 3: `isError` vs JSON-RPC error |
-| 8 | `prompts/plan/17_Junk_on_stdout_—_MCP_Client.md` | planning agent | Question 3: stdout and stderr hygiene |
-| 9 | `prompts/plan/18_Pagination_and_list_changed_—_MCP_Client.md` | planning agent | Question 2: pagination, `list_changed` |
-| 10 | `prompts/plan/19_Timeouts,_Hangs_and_Cancellation_—_MCP_Client.md` | planning agent | Question 3: idle timeout, progress, cancellation |
-| 11 | `prompts/plan/20_Crash_and_Reconnect_—_MCP_Client.md` | planning agent | Question 3: crash, restart, reconnect, shutdown |
-| 12 | `prompts/plan/21_Structural_Garbage_—_Wrong_id___Bad_Envelope_—_MCP_Client.md` | planning agent | Question 3: wrong ids, bad envelopes |
-| 13 | `prompts/plan/22_Determinism_—_MCP_Client.md` | planning agent | Question 4: D vs S, repeats, flake policy |
-| 14 | `prompts/plan/23_Limits_and_Other_Checks_—_MCP_Client.md` | planning agent | Question 5: limits, config errors, hooks, permission rules, credentials |
-| 15 | `prompts/plan/24_Handoff_—_Bay_MCP_Assignment.md` | planning agent | State, the 10 items to build, next steps |
-| 16 | `prompts/plan/Documentation/R01_Claude_Code_—_MCP_Facts_(checked_2026-10-14,_for_2.1.296).md` | planning agent (reference) | Fact sheet: Claude Code MCP facts for 2.1.296 |
-| 17 | `prompts/plan/Documentation/R06_Claude_Code_MCP_Facts_—_Tool_Search,_Headless,_Spec_Pagination_Progress_(addendum).md` | planning agent (reference) | Fact sheet addendum: tool search, `-p`, pagination, progress |
-| 18 | `prompts/plan-review/mcp-plan-review-prompt.md` | reviewer | Plan review, run 5 times (rounds 1 to 5) |
-| 19 | `prompts/01-dev-setup-and-status-matrix.md` | Dev | Step 1: harness, Dockerfile, `run.sh`, fakes, status matrix (D12/T4, D13/T3) |
-| 20 | `prompts/02-qa-setup-and-status-matrix.md` | QA | Check step 1 |
-| 21 | `prompts/03-dev-fix-step1-after-qa.md` | Dev | Fix the step 1 QA findings (bare 401 case, no bind mount, ...) |
-| 22 | `prompts/04-qa-recheck-step1.md` | QA | Re-check the step 1 fixes |
-| 23 | `prompts/05-dev-step2-handshake-and-credentials.md` | Dev | Step 2: handshake (D12/T1, T3), credentials (D13/T4, D23/T11) |
-| 24 | `prompts/06-qa-step2-handshake-and-credentials.md` | QA | Check step 2 |
-| 25 | `prompts/07-dev-step3-model-harness-and-smoke.md` | Dev | Step 3: model-run harness, cost ledger, D14/T1, T2, D23/T2 |
-| 26 | `prompts/08-qa-step3-model-harness-and-smoke.md` | QA | Check step 3 |
-| 27 | `prompts/09-dev-step4-right-tool-args-determinism.md` | Dev | Step 4: D15/T1-T3, repeat harness, flake policy |
-| 28 | `prompts/10-qa-step4-right-tool-args-determinism.md` | QA | Check step 4 |
-| 29 | `prompts/11-dev-step5-tool-errors-and-crash.md` | Dev | Step 5: D16/T1, T2, D20/T1, plus the step 4 fix |
-| 30 | `prompts/12-qa-step5-tool-errors-and-crash.md` | QA | Check step 5 |
-| 31 | `prompts/13-dev-step6-timeouts-and-permissions.md` | Dev | Step 6: D19/T1+T3, D23/T9, T10, plus the step 5 fix |
-| 32 | `prompts/14-qa-step6-timeouts-and-permissions.md` | QA | Check step 6 |
-| 33 | `prompts/15-dev-step7-docs.md` | Dev | Step 7: step 6 fixes, PLAN.md, README.md, PROMPTS.md, repo hygiene |
-| 34 | `prompts/16-qa-step7-final.md` | QA | Final check as the reviewer: fresh-clone run, docs vs code |
-| 35 | `prompts/17-dev-step8-test-logs-and-asserts.md` | Dev | Step 8: every test logs its actions, waits and results; every assert in Expected/Actual form (`harness/check.py`) |
-| 36 | `prompts/18-qa-step8-test-logs-and-asserts.md` | QA | Check step 8: the logs, the Expected/Actual messages, no secret in the logs |
-| 37 | `prompts/19-dev-step8b-log-fixes.md` | Dev | Fix the step 8 QA findings |
-| 38 | `mcp-repo-review-prompt.md` (kept outside the repo) | reviewer | Hiring-panel review of the repo: a panel of experts scores it and ranks the fixes. Run twice, on 2026-10-17 |
-| 39 | `mcp-repo-fix-prompt.md` (kept outside the repo) | orchestrating agent | Apply the fixes of the newest repo review. Given to a new Claude Code session after each review (twice: after review 1 and after review 2); each run used Dev and QA agents in parallel units |
+| 1-15 | `prompts/plan/00_START_HERE_—_read_this_first.md` and docs 11 to 24 | planning agent | 00: reading order. 11: the harness (pinned version, env, flags, fake server, gate, known-defect rule, cost cap). 12 to 23: one test area each, every idea on one line (question 1: 12, 13; question 2: 14, 15, 18; question 3: 16, 17, 19 to 21; question 4: 22; question 5: 23). 24: the handoff, with the 10 items to build |
+| 16-17 | `prompts/plan/Documentation/R01_...md`, `R06_...md` | planning agent (reference) | Fact sheets: Claude Code MCP facts for 2.1.296; an addendum on tool search, `-p`, pagination, progress |
+| 18 | `prompts/plan-review/mcp-plan-review-prompt.md` | reviewer | Plan review, run 5 times |
+| 19-37 | `prompts/01-...md` to `prompts/19-...md` | Dev (odd numbers) and QA (even numbers) | The build in 8 steps, each a Dev prompt and a QA check; the file names say the step. 1: harness, Dockerfile, `run.sh`, fakes, status matrix (01-04, with one fix and re-check). 2: handshake, credentials. 3: model-run harness, cost ledger, smoke. 4: right tool, arguments, repeats, flake policy. 5: tool errors, crash. 6: idle timeout, permissions. 7: the docs, then a final check as the reviewer from a fresh clone. 8: a log line for every action, wait and result, every assert as Expected/Actual (17-19, with one fix) |
+| 38 | `prompts/repo-review/mcp-repo-review-prompt.md` | reviewer | Hiring-panel review of the repo: a panel of experts scores it and ranks the fixes. Run after the build and after each fix round |
+| 39 | `prompts/repo-review/mcp-repo-fix-prompt.md` | orchestrating agent | Apply the fixes of the newest repo review. Given to a new Claude Code session after each review; each run used Dev and QA agents in parallel units |
 
-R02 to R05 were given to the planning agent too, but they are copies of public
-spec pages, so they are listed here and not copied:
-
-| File (in the plan folder) | Source |
-|---|---|
-| `Documentation/R02_MCP_Spec_2025-11-25_—_Lifecycle.md` | https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle |
-| `Documentation/R03_MCP_Spec_2025-11-25_—_Cancellation.md` | https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/cancellation |
-| `Documentation/R04_MCP_Spec_2025-11-25_—_Transports_(stdio,_Streamable_HTTP).md` | https://modelcontextprotocol.io/specification/2025-11-25/basic/transports |
-| `Documentation/R05_MCP_Spec_2026-07-28_—_Versioning_and_Compatibility.md` | https://modelcontextprotocol.io/specification/latest/basic/lifecycle |
+R02 to R05, also given to the planning agent, are copies of public MCP
+spec pages (2025-11-25 lifecycle, cancellation and transports; 2026-07-28
+versioning), so they are not copied here.
 
 ## Launcher text
 
 Prompts 01 to 04 were passed to the agents inline. From step 2 on, each
-Dev and QA agent was started with one line that points to its prompt
-file (N = the step, `<path>` = the file):
-
-- Dev: ``You are the Dev agent for step N. Your full task is in this file; read it in full first and follow it exactly: <path>. Do not edit that file or any other file under `mcp-client-suite/prompts/`.``
-  Step 7 added: ``(you may add the new folders `prompts/plan/` and `prompts/plan-review/` as the task says)``.
-- QA: ``You are the QA agent for step N. Your full task is in this file; read it in full first and follow it exactly: <path>. Do not edit that file or any other file under `mcp-client-suite/`.``
-
-Between steps, the orchestrating session pasted each QA finding into the
-next Dev prompt ("Fix first") and each Dev report's claims into the next
-QA prompt ("Dev's claims"); the prompt files are as sent.
+agent got one line: ``You are the Dev [QA] agent for step N. Your full task
+is in this file; read it in full first and follow it exactly: <path>.``,
+plus the files it must not edit. Between steps, the orchestrating session
+pasted each QA finding into the next Dev prompt ("Fix first") and each Dev
+report's claims into the next QA prompt; the prompt files are as sent.
 
 ## What was checked before copying
 
-Every copied file (docs 00, 11 to 24, R01, R06, the review prompt) and
-every build prompt was searched for `sk-ant`, `Bearer ` followed by a
-value, the word "token" and e-mail addresses. No secret and no e-mail
-address was found; the hits are "token" in its normal sense and the
-`sk-ant` pattern named in prompt 15's own instructions.
+Every copied file (docs 00, 11 to 24, R01, R06, the three review and fix
+prompts) and every build prompt was searched for `sk-ant`, `Bearer `
+followed by a value, the word "token" and e-mail addresses. No secret was
+found; the hits are "token" in its normal sense and the `sk-ant` pattern
+named in the prompts' own rules. One e-mail address, in the repo-fix
+prompt, was replaced with `[e-mail address removed]`; the `noreply`
+address of the commit trailer was kept.
 
 ## The candidate's messages
 
 The chat messages in which the candidate made a decision, taken from the
-session transcripts. Each is paraphrased: spelling fixed, meaning kept. Times are local (UTC+3). The plan docs were written and
-revised outside these sessions; those chats are not listed.
+session transcripts. Each is paraphrased: spelling fixed, meaning kept.
+Times are local (UTC+3). The plan docs were written and revised outside
+these sessions; those chats are not listed.
 
 ### Session 1: plan review, round 1
 
@@ -146,8 +104,8 @@ from docx to md.
 ### Session 3: the build
 
 Claude Code session `b8db9188`, 2026-10-17 00:05 to 2026-10-17 14:13
-(active 00:05-00:58, 11:43-13:21, 13:45-14:13), 73 messages. This session wrote build prompts 01 to 19 and ran the Dev and
-QA agents.
+(active 00:05-00:58, 11:43-13:21, 13:45-14:13), 73 messages. This session
+wrote build prompts 01 to 19 and ran the Dev and QA agents.
 
 - 00:07 (paraphrased): "I am thinking of two agents, QA and Dev. They
   work through the plan docs in a loop: when one doc is done, go to the
@@ -167,7 +125,8 @@ QA agents.
   future manager of the team. Improve the prompt; ask questions." This
   became the repo-review prompt (row 38).
 
-The other 82 messages of the three sessions (91 in all) were short
+The three sessions hold 91 messages. 9 are above: the 4 lines that ran
+the plan-review prompt and the 5 decisions. The other 82 were short
 steering and status lines (what is running, how much was spent, open the
 report, set up git), plus one message that held the API key and one
 paste of another tool's output, dropped; they are not listed.

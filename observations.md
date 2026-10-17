@@ -533,7 +533,7 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   NOT in `permission_denials` (it is "no such tool", not a denial).
 - Variant A (`--allowedTools "mcp__guard"` only, servers `guard` and
   `guard__ops`): `mcp__guard__ops__rotate_logs` reached `guard__ops` and
-  succeeded, 2 of 2 runs. Known defect, changelog.md:212 (fixed in
+  succeeded, 2 of 2 runs. Known defect, changelog.md:212 (changed in
   2.1.299): strict xfail.
 - Variant B (`--allowedTools "mcp__guard__ops__*"`, `--disallowedTools
   "mcp__guard__ops"`): `rotate_logs` stayed in `system/init` tools,
@@ -582,8 +582,9 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   `permission_denied` system event for it (`decision_reason_type`
   "asyncAgent"). This matches hooks.md:1934 and headless.md:333. Unlike a
   hook `deny` (no event), a hook `ask` is a denied prompt, so it shows in
-  both places. The test asserts the denial and the reason; the event and
-  `permission_denials` are recorded only.
+  both places. The test asserts the denial, the reason and the one
+  `permission_denied` event (every other T9 case asserts none);
+  `permission_denials` is recorded only.
 
 ## 2026-10-17, step 6 model spend
 
@@ -639,8 +640,13 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   (`oauth_discovery_paths_requested`), not asserted.
 - Now recorded, not xfailed (commit 4188004): the server breaks the spec
   MUST to publish Protected Resource Metadata (2025-11-25
-  basic__authorization.md:65), and the client follows the spec's fallback
-  and reports what it got. mcp.md:764 assumes an OAuth server. So the
+  basic__authorization.md:65). The client asks for both well-known
+  resource-metadata URIs (:104), and also, at the MCP origin, for
+  `/.well-known/oauth-authorization-server`,
+  `/.well-known/openid-configuration` and `POST /register`, which
+  2025-11-25 does not define without that metadata (:178, :211); it
+  reports the 404 of the registration (wire log of run
+  `20261017T142752Z-19955`). mcp.md:764 assumes an OAuth server. So the
   status is compared with the doc line record-only (`run.json` key
   `observations.documented_bare_401_status`); a compliant server (401 with
   metadata) gets `! Needs authentication` and
