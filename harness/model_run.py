@@ -29,7 +29,7 @@ import os
 from dataclasses import dataclass
 
 from harness.check import got, step
-from harness.claude_cli import run_claude
+from harness.claude_cli import OUTPUT_PREVIEW_HIDDEN, run_claude
 from harness.cost_ledger import SOURCE_EXCEPTION, SOURCE_NO_RESULT, SOURCE_RESULT, SOURCE_RESULT_WITHOUT_COST
 
 
@@ -207,7 +207,7 @@ def run_print(*, sandbox, env, ledger, test_id, label, prompt, model, max_turns,
     )
     try:
         cli = run_claude(args=args, env=env, cwd=sandbox.project_dir, timeout_s=timeout_s,
-                         command_log=sandbox.command_log)
+                         command_log=sandbox.command_log, show_output_preview=OUTPUT_PREVIEW_HIDDEN)
         stream = parse_stream(text=cli.stdout)
         stream_file = os.path.join(sandbox.artifact_dir, "stream-%s.jsonl" % label)
         with open(stream_file, "w", encoding="utf-8") as handle:

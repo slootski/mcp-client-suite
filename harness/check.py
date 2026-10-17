@@ -18,12 +18,20 @@ Log lines are cut at LOG_VALUE_MAX_CHARS. When both sides of a check are
 long, the cut keeps the first place where they differ in view, so the log
 line never hides the difference. The AssertionError carries the full values.
 
+checks_logged_once(what=...) is a context manager for a block of checks
+that the test runs again later on the same data, where they are logged in
+full: inside it, OK check lines are counted, not logged, and step/got/record
+lines are not logged; a FAIL line is logged as always (ERROR, with both
+values); on a clean exit one INFO line "<what>: <n> checks OK (logged in
+full on the final attempt)".
+
 Secrets: these helpers do not redact. Callers pass redacted text, a
 fingerprint, or a boolean (computed first), never a credential value.
 The `stacklevel` arguments make each line name the caller's file, line and
 function, not this module's.
 """
 
+import contextlib
 import logging
 import time
 
@@ -36,6 +44,10 @@ CALLER_OF_CHECK = 3  # stacklevel: the function that called expect_* (through _r
 LINE_BREAK_SHOWN = " | "  # a line break inside a value, so each log record stays one line
 RESULT_OK = "OK"
 RESULT_FAIL = "FAIL"
+ONE_FRAME_MORE = 1  # stacklevel: _info adds one frame between the helper and logger.info
+
+# checks_logged_once state: None outside the block, else the OK checks counted so far.
+_logged_once = {"ok_count": None}
 
 
 def shown(*, value):
@@ -80,19 +92,42 @@ def cut_pair(*, expected, actual):
     return _window(text=expected, start=start), _window(text=actual, start=start)
 
 
+def _info(*, stacklevel, message, args):
+    """logger.info, except inside checks_logged_once (not logged there)."""
+    if _logged_once["ok_count"] is None:
+        logger.info(message, *args, stacklevel=stacklevel + ONE_FRAME_MORE)
+
+
+@contextlib.contextmanager
+def checks_logged_once(*, what):
+    """A block of checks the test runs again later on the same data and logs
+    there in full (e.g. a D check on every attempt, then on the final run).
+    Inside: OK check lines are counted, not logged; step/got/record lines
+    are not logged; a FAIL line is logged (ERROR) and raised as always. A
+    clean exit logs one INFO line with the number of OK checks."""
+    outer = _logged_once["ok_count"]
+    _logged_once["ok_count"] = 0
+    try:
+        yield
+        counted = _logged_once["ok_count"]
+    finally:
+        _logged_once["ok_count"] = outer
+    logger.info("%s: %d checks OK (logged in full on the final attempt)", what, counted, stacklevel=CALLER_OF_CHECK)
+
+
 def step(*, text):
     """A test action: add a server, start a fake, run a command, mutate a recording."""
-    logger.info("step: %s", text, stacklevel=CALLER_OF_HELPER)
+    _info(stacklevel=CALLER_OF_HELPER, message="step: %s", args=(text,))
 
 
 def got(*, what, value):
     """A value the test read back: a status line, a field, a count, a timing."""
-    logger.info("got %s: %s", what, cut(text=shown(value=value)), stacklevel=CALLER_OF_HELPER)
+    _info(stacklevel=CALLER_OF_HELPER, message="got %s: %s", args=(what, cut(text=shown(value=value))))
 
 
 def record(*, what, value):
     """An S fact that is recorded, not asserted."""
-    logger.info("S recorded: %s: %s", what, cut(text=shown(value=value)), stacklevel=CALLER_OF_HELPER)
+    _info(stacklevel=CALLER_OF_HELPER, message="S recorded: %s: %s", args=(what, cut(text=shown(value=value))))
 
 
 def wait_start(*, what):
@@ -115,6 +150,9 @@ def _report(*, what, expected_text, actual_text, holds):
     """One log line for a check, then the AssertionError on a miss."""
     expected_log, actual_log = cut_pair(expected=expected_text, actual=actual_text)
     if holds:
+        if _logged_once["ok_count"] is not None:
+            _logged_once["ok_count"] += 1
+            return
         logger.info("check %s: Expected: %s, Actual: %s -> %s", what, expected_log, actual_log, RESULT_OK,
                     stacklevel=CALLER_OF_CHECK)
         return

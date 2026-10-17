@@ -208,13 +208,15 @@ def test_recorded_run_pure_check():
     records = {server: recorded_wire(server=server) for server in CALC_SERVERS}
     text = recorded_stream_text()
     step(text="check the recorded D15/T1 stream against its wire logs, as recorded")
-    expect_equal(what="tools/call with no tool_use in the recorded run", expected={},
-                 actual=calls_without_tool_use(stream=parse_stream(text=text), records_by_server=records))
+    as_recorded = calls_without_tool_use(stream=parse_stream(text=text), records_by_server=records)
+    got(what="tools/call with no tool_use in the recorded run, per server", value=as_recorded)
+    expect_equal(what="tools/call with no tool_use in the recorded run", expected={}, actual=as_recorded)
     step(text="check it again with every tool_use and tool_result removed from the stream")
     stray = calls_without_tool_use(stream=parse_stream(text=stream_without_tool_use(text=text)),
                                    records_by_server=records)
-    expect_equal(what="tools/call with no tool_use, per server (count)", expected={"calc2": 1},
-                 actual={server: len(stray[server]) for server in stray})
+    stray_count = {server: len(stray[server]) for server in stray}
+    got(what="tools/call with no tool_use once the tool_use blocks are removed, per server (count)", value=stray_count)
+    expect_equal(what="tools/call with no tool_use, per server (count)", expected={"calc2": 1}, actual=stray_count)
 
 
 def test_call_without_tool_use_fails_before_retry(free_sandbox, request, monkeypatch):
@@ -270,6 +272,7 @@ HOOKS_FILE = "hooks.jsonl"
 D16_TOKEN = re.compile(r"%s[0-9a-f]{%d}" % (test_tool_errors.TOKEN_PREFIX, 2 * test_tool_errors.TOKEN_HEX_BYTES))
 NO_RESULT_MESSAGE = "the stream has no result event"
 CRASH_RUN_INDEX = 0
+CRASH_TOOL_USE_ID = "toolu_01ASD9nz6Z8hdSiBCkzdpf6V"  # the crashed tool_use in CRASH_RECORDING's stream
 
 
 def recording(*, folder, server):
@@ -283,11 +286,12 @@ def recording(*, folder, server):
 
 
 def first_tool_result_index(*, events):
-    for index, event in enumerate(events):
-        if event["type"] == "user" and isinstance(event["message"]["content"], list) and any(
-                block["type"] == "tool_result" for block in event["message"]["content"]):
-            return index
-    raise AssertionError("the recording has no tool_result")
+    hits = [index for index, event in enumerate(events)
+            if event["type"] == "user" and isinstance(event["message"]["content"], list) and any(
+                block["type"] == "tool_result" for block in event["message"]["content"])]
+    expect_true(what="user events with a tool_result in the recording", expected="at least one",
+                actual="%d (stream lines %s)" % (len(hits), hits), holds=bool(hits))
+    return hits[0]
 
 
 def client_died_after_first_tool_result(*, text, records):
@@ -387,7 +391,11 @@ def crash_call(*, sandbox, request, monkeypatch, attempts, hooks):
 
 @pytest.mark.parametrize("mutation, match", [
     ("client_died_after_first_tool_result", NO_RESULT_MESSAGE),
-    ("crash_result_dropped", "tool_result blocks for the crashed tool_use"),
+    # The full check message pins the count (Expected 1, Actual 0); the id
+    # keeps the test id of step 8.
+    pytest.param("crash_result_dropped",
+                 "tool_result blocks for the crashed tool_use %s: Expected: 1. Actual: 0." % CRASH_TOOL_USE_ID,
+                 id="crash_result_dropped-tool_result blocks for the crashed tool_use"),
 ])
 def test_crash_client_died_fails(free_sandbox, request, monkeypatch, mutation, match):
     """QA step 5 break for D20/T1: must FAIL, not skip and not xfail."""
@@ -452,22 +460,22 @@ def iso_timestamp(*, epoch):
 
 def tool_result_event(*, events, tool_use_id):
     """Index of the user event that holds the tool_result of tool_use_id."""
-    for index, event in enumerate(events):
-        if event["type"] == "user" and isinstance(event["message"]["content"], list) and any(
+    hits = [index for index, event in enumerate(events)
+            if event["type"] == "user" and isinstance(event["message"]["content"], list) and any(
                 block["type"] == "tool_result" and block["tool_use_id"] == tool_use_id
-                for block in event["message"]["content"]):
-            return index
-    raise AssertionError("the recording has no tool_result for %s" % tool_use_id)
+                for block in event["message"]["content"])]
+    expect_true(what="user events with the tool_result for %s in the recording" % tool_use_id,
+                expected="at least one", actual="%d (stream lines %s)" % (len(hits), hits), holds=bool(hits))
+    return hits[0]
 
 
 def tool_use_of(*, events, name):
     """(event index, tool_use block) of the first tool_use named `name`."""
-    for index, event in enumerate(events):
-        if event["type"] == "assistant":
-            for block in event["message"]["content"]:
-                if block["type"] == "tool_use" and block["name"] == name:
-                    return index, block
-    raise AssertionError("the recording has no tool_use named %s" % name)
+    hits = [(index, block) for index, event in enumerate(events) if event["type"] == "assistant"
+            for block in event["message"]["content"] if block["type"] == "tool_use" and block["name"] == name]
+    expect_true(what="tool_use blocks named %s in the recording" % name, expected="at least one",
+                actual="%d (stream lines %s)" % (len(hits), [index for index, _block in hits]), holds=bool(hits))
+    return hits[0]
 
 
 def rewrite_tool_result(*, text, tool_use_id, epoch, content, is_error):

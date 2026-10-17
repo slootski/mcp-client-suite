@@ -38,7 +38,7 @@ complete `<run-id>`. In the folder:
 
 - `junit.xml`: the pytest result, JUnit XML.
 - `report.html`: the same result as a pytest-html page (one file, open it in a browser). Each test row shows its log lines, links to its artifact files, and its `run.json`.
-- `suite.log`: every log line of the run, in the format `12:37:32.90 2026-10-17 [INFO    ] claude_cli.py:122 run_claude() - waiting done (0.13 s): exit 0, stdout 300 bytes: ...` (host time zone; `harness/log_format.py`). Log lines hold redacted text only: commands with `--env`/`--header` values as hash + length, and the first 200 chars of each CLI output after every test credential and the API key are replaced.
+- `suite.log`: every log line of the run, in the format `12:37:32.90 2026-10-17 [INFO    ] claude_cli.py:122 run_claude() - waiting done (0.13 s): exit 0, stdout 300 bytes: ...` (host time zone; `harness/log_format.py`). Log lines hold redacted text only: commands with `--env`/`--header` values as hash + length, and the first 200 chars of each `claude mcp ...` command's output after every test credential and the API key are replaced (a `claude -p` run logs exit code, time and byte counts only; its stream is summarized on the next `got ... stream` line and kept in `stream-attemptN.jsonl`).
 - `cost.json`: every model run with its `total_cost_usd`, per test and in
   total. `s-rates.json`: the S pass rates of repeated tests.
 - `secret-scan.json`: the result of the scan for the API key and test
@@ -61,8 +61,16 @@ fact kept, not asserted; `check <what>: Expected: ..., Actual: ... -> OK`
 behavior that 2.1.296 does not show logs a WARNING with the doc line as
 Expected and raises `DocumentedBehaviorMismatch` (the strict xfails). Long
 values are cut in the log line only (300 chars, around the first
-difference). Ten lines of `test_stdio_crash_mid_call[0]` from run
-`20261017T094227Z-47669` (lines over 200 chars cut here, marked `[...]`):
+difference). An ERROR line inside a passing `test_harness_offline.py` test
+is expected: those tests replay a mutated recording to provoke a failure on
+purpose, and then check that failure. A line `attempt check d_error_result
+for <tool>: N checks OK (logged in full on the final attempt)` stands
+for checks that run on every attempt and are logged in full once, on the
+final attempt (`harness/check.py` `checks_logged_once`). Ten lines of
+`test_stdio_crash_mid_call[0]` from run `20261017T094227Z-47669` (lines
+over 200 chars cut here, marked `[...]`; since step 8b the `waiting done`
+line of a `claude -p` run shows byte counts only, e.g. `exit 0, stdout 8401
+bytes, stderr 0 bytes`):
 
 ```
 12:37:20.74 2026-10-17 [INFO    ] test_crash.py:332 crash_run() - step: stdio server crashy (FAKE_MODE=exit_on_first_tools_call): exits with code 3 on the first tools/call; prompt: mcp__crashy__echo_c [...]

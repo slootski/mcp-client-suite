@@ -93,7 +93,7 @@ from harness.model_checks import (
 )
 from harness.model_flow import run_until_triggered
 from harness.model_run import allowed_tools_for, stdio_server_entry
-from harness.repeat import evaluate_s_rate, record_s_sample, start_repeat
+from harness.repeat import evaluate_s_rate, per_repeat_outcomes, record_s_sample, start_repeat
 from harness.wire import message_method
 
 pytestmark = [pytest.mark.model, pytest.mark.timeout(MODEL_TEST_TIMEOUT_S)]
@@ -210,7 +210,8 @@ def assert_s_rate(*, summary, group):
     got(what="S rate of %s" % group, value="%d/%d passes, per fact %s" % (
         summary["passes"], summary["repeats_ran"], summary["per_rated_fact"]))
     expect_true(what="S pass rate of %s" % group, expected=">= %d of %d" % (S_RATE_MIN_PASSES, REPEATS),
-                actual="%d of %d; runs %s" % (summary["passes"], summary["repeats_ran"], summary["runs"]),
+                actual="%d of %d; per repeat %s" % (summary["passes"], summary["repeats_ran"],
+                                                    per_repeat_outcomes(summary=summary)),
                 holds=summary["passes"] >= S_RATE_MIN_PASSES)
 
 
@@ -347,6 +348,7 @@ def test_right_tool_among_near_duplicates(model_sandbox, cost_ledger, request, r
 # the suite uses neither. Run alone (`-k s_rate`), it sees 0 of REPEATS
 # repeats and skips as inconclusive.
 def test_right_tool_among_near_duplicates_s_rate(request, item_artifact_dir):
+    step(text="read the S samples of the %d repeats of %s" % (REPEATS, GROUP_T1))
     summary = evaluate_s_rate(
         config=request.config, group=GROUP_T1, repeats=REPEATS, min_passes=S_RATE_MIN_PASSES,
         rates_file=item_rates_file(), artifact_dir=item_artifact_dir,
@@ -493,6 +495,7 @@ def test_ticket_arguments_and_result_fidelity(model_sandbox, cost_ledger, reques
 # the suite uses neither. Run alone (`-k s_rate`), it sees 0 of REPEATS
 # repeats and skips as inconclusive.
 def test_ticket_arguments_and_result_fidelity_s_rate(request, item_artifact_dir):
+    step(text="read the S samples of the %d repeats of %s" % (REPEATS, GROUP_T2))
     summary = evaluate_s_rate(
         config=request.config, group=GROUP_T2, repeats=REPEATS, min_passes=S_RATE_MIN_PASSES,
         rates_file=item_rates_file(), artifact_dir=item_artifact_dir,

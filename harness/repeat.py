@@ -113,6 +113,13 @@ def evaluate_s_rate(*, config, group, repeats, min_passes, rates_file, artifact_
     return summary
 
 
+def per_repeat_outcomes(*, summary):
+    """[(repeat, "pass" or the miss reason), ...] of an evaluate_s_rate
+    summary: the short per-repeat view for a log line and a failed check
+    (s-rate.json keeps the full runs)."""
+    return [(run["repeat"], "pass" if run["passed"] else run["reason"]) for run in summary["runs"]]
+
+
 def write_rates_file(*, config, path):
     """Every S rate of the session so far, in one file next to cost.json."""
     rates = config.stash[S_RATES_KEY]

@@ -64,7 +64,7 @@ from harness.constants import (
     TOOLSET_TOOL_ERROR,
     FAKE_MODE_NORMAL,
 )
-from harness.check import expect_equal, expect_true, got, record, step
+from harness.check import checks_logged_once, expect_equal, expect_true, got, record, step
 from harness.error_checks import (
     REPLY_IS_ERROR_RESULT,
     REPLY_JSONRPC_ERROR,
@@ -73,7 +73,7 @@ from harness.error_checks import (
     spawns,
 )
 from harness.fakes_ctl import STDIO_FAKE_SCRIPT
-from harness.hooks import hook_events, hook_settings_args, read_hook_log
+from harness.hooks import check_hook_log, hook_events, hook_settings_args, read_hook_log
 from harness.mcp_setup import PYTHON, stdio_fake_env
 from harness.model_checks import (
     assert_era,
@@ -84,7 +84,7 @@ from harness.model_checks import (
 )
 from harness.model_flow import run_until_triggered
 from harness.model_run import allowed_tools_for, stdio_server_entry
-from harness.repeat import evaluate_s_rate, record_s_sample, start_repeat
+from harness.repeat import evaluate_s_rate, per_repeat_outcomes, record_s_sample, start_repeat
 
 pytestmark = [pytest.mark.model, pytest.mark.timeout(MODEL_TEST_TIMEOUT_S)]
 
@@ -168,6 +168,7 @@ def check_d(*, sandbox, triggered, case, token, hook_log):
     sandbox.record.observe(key="error_result", value=error_view)
 
     entries = read_hook_log(path=hook_log)
+    check_hook_log(entries=entries)
     echo_uses = stream.tool_uses_named(name=echo_name)
     hook_view = {
         "post_tool_use_failure": [e["input"] for e in hook_events(entries=entries, event_name=HOOK_POST_TOOL_USE_FAILURE)],
@@ -201,14 +202,17 @@ def error_attempt_check(*, case, token):
     """A D check for every attempt (harness/model_flow.py attempt_checks):
     as soon as the failing tool has a tool_use, its tools/call, the fake's
     reply and the error tool_result are judged (d_error_result), also on an
-    attempt that is about to be retried or skipped as inconclusive."""
+    attempt that is about to be retried or skipped as inconclusive. Its OK
+    lines are counted, not logged: check_d logs the same checks in full on
+    the final attempt (a failure is logged here as always)."""
     server = case["server"]
     name = mcp_tool_name(server=server, tool=case["tool"])
 
     def check(*, stream, records):
         if stream.tool_uses_named(name=name):
-            d_error_result(stream=stream, records=records[server], server=server, tool=case["tool"], token=token,
-                           expected_reply=case["reply"])
+            with checks_logged_once(what="attempt check d_error_result for %s" % name):
+                d_error_result(stream=stream, records=records[server], server=server, tool=case["tool"],
+                               token=token, expected_reply=case["reply"])
     return check
 
 
@@ -272,6 +276,7 @@ def canonical_arguments(*, case):
 
 
 def s_rate(*, request, item_artifact_dir, case_id):
+    step(text="read the S samples of the %d repeats of %s" % (REPEATS, CASES[case_id]["group"]))
     summary = evaluate_s_rate(
         config=request.config, group=CASES[case_id]["group"], repeats=REPEATS, min_passes=S_RATE_MIN_PASSES,
         rates_file=os.environ[RATES_FILE_ENV], artifact_dir=item_artifact_dir,
@@ -280,7 +285,8 @@ def s_rate(*, request, item_artifact_dir, case_id):
         summary["passes"], summary["repeats_ran"], summary["per_rated_fact"]))
     expect_true(what="S pass rate of %s" % CASES[case_id]["group"],
                 expected=">= %d of %d" % (S_RATE_MIN_PASSES, REPEATS),
-                actual="%d of %d; runs %s" % (summary["passes"], summary["repeats_ran"], summary["runs"]),
+                actual="%d of %d; per repeat %s" % (summary["passes"], summary["repeats_ran"],
+                                                    per_repeat_outcomes(summary=summary)),
                 holds=summary["passes"] >= S_RATE_MIN_PASSES)
 
 

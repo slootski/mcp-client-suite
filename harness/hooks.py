@@ -52,9 +52,14 @@ def read_hook_log(*, path):
     return read_records(path=path)
 
 
-def hook_events(*, entries, event_name):
-    """The lines of one hook event. A line whose stdin was not JSON with a
-    hook_event_name fails here (the logger keeps it as evidence)."""
+def check_hook_log(*, entries):
+    """Every line of a hook log (read_hook_log) has a hook_event_name. A line
+    whose stdin was not JSON with one fails here (the logger keeps it as
+    evidence). Call once per log, before hook_events."""
     bad = [entry for entry in entries if "hook_event_name" not in entry["input"]]
     expect_equal(what="hook log lines without hook_event_name", expected=[], actual=bad)
+
+
+def hook_events(*, entries, event_name):
+    """The lines of one hook event, from entries that passed check_hook_log."""
     return [entry for entry in entries if entry["input"]["hook_event_name"] == event_name]

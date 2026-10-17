@@ -76,7 +76,7 @@ from harness.constants import (
 from harness.check import expect_equal, expect_true, got, record, step
 from harness.error_checks import event_epoch, spawns
 from harness.fakes_ctl import STDIO_FAKE_SCRIPT
-from harness.hooks import hook_events, hook_settings_args, read_hook_log
+from harness.hooks import check_hook_log, hook_events, hook_settings_args, read_hook_log
 from harness.known_defects import DocumentedBehaviorMismatch, expect_documented
 from harness.mcp_setup import PYTHON, stdio_fake_env
 from harness.model_checks import (
@@ -241,6 +241,7 @@ def check_d(*, sandbox, triggered, hook_log):
     eager = [r["pid"] for r in started if r["epoch"] > exit_epoch
              and (next_use_epoch is None or r["epoch"] < next_use_epoch)]
     entries = read_hook_log(path=hook_log)
+    check_hook_log(entries=entries)
     view = {
         "era_seen": era,
         "spawns": [{"pid": r["pid"], "ppid": r["ppid"], "epoch": r["epoch"], "ts": r["ts"],
@@ -372,6 +373,7 @@ def test_stdio_crash_mid_call(model_sandbox, cost_ledger, request, run_index):
 
 # Runs after the CRASH_RUNS items (pytest keeps definition order).
 def test_stdio_crash_mid_call_same_every_run(request):
+    step(text="read the signatures of the %d crash runs of this session" % CRASH_RUNS)
     signatures = request.config.stash[SIGNATURES_KEY] if SIGNATURES_KEY in request.config.stash else {}
     if len(signatures) < CRASH_RUNS:
         pytest.skip("inconclusive: %d of %d crash runs completed in this session" % (len(signatures), CRASH_RUNS))

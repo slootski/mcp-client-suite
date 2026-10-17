@@ -15,7 +15,7 @@ import tempfile
 import pytest
 
 from harness.check import expect_equal, step, wait_done, wait_failed, wait_start
-from harness.claude_cli import CommandLog, run_claude
+from harness.claude_cli import OUTPUT_PREVIEW_SHOWN, CommandLog, run_claude
 from fakes.wirelog import fingerprint
 from harness import repeat
 from harness.constants import (
@@ -270,6 +270,7 @@ class Sandbox:
         return run_claude(
             args=args, env=self.env, cwd=self.project_dir,
             timeout_s=CLAUDE_CLI_TIMEOUT_S, command_log=self.command_log,
+            show_output_preview=OUTPUT_PREVIEW_SHOWN,
         )
 
     def claude_with_env(self, *, args, env):
@@ -278,6 +279,7 @@ class Sandbox:
         return run_claude(
             args=args, env=env, cwd=self.project_dir,
             timeout_s=CLAUDE_CLI_TIMEOUT_S, command_log=self.command_log,
+            show_output_preview=OUTPUT_PREVIEW_SHOWN,
         )
 
     def new_config_env(self, *, label):
@@ -321,6 +323,15 @@ class Sandbox:
         return os.path.join(self.artifact_dir, "wire-%s.jsonl" % name)
 
 
+def names_vs_free(*, names, free_names):
+    """'<count> (the free set, +ADDED, -LEFT_OUT)': env var names as the
+    difference from the free test's set, for one short log line (run.json
+    keeps the full lists)."""
+    added = ["+%s" % name for name in sorted(set(names) - set(free_names))]
+    left_out = ["-%s" % name for name in sorted(set(free_names) - set(names))]
+    return "%d (%s)" % (len(names), ", ".join(["the free set"] + added + left_out))
+
+
 def new_sandbox(*, request, tmp_path, pins, unset):
     """A Sandbox with a fresh CLAUDE_CONFIG_DIR and HOME, the given env pins,
     and a run record. finish_sandbox() is its teardown."""
@@ -342,8 +353,9 @@ def new_sandbox(*, request, tmp_path, pins, unset):
         env_unset=unset,
     )
     registry = SecretRegistry()
-    logger.info("sandbox: fresh CLAUDE_CONFIG_DIR, pins %s, unset %s, artifacts in %s",
-                sorted(pins), list(unset), os.path.basename(artifact_dir))
+    logger.info("sandbox: fresh CLAUDE_CONFIG_DIR, env pins %s, unset %s",
+                names_vs_free(names=pins, free_names=FREE_ENV_PINS),
+                names_vs_free(names=unset, free_names=FREE_ENV_UNSET))
     return Sandbox(
         root=root, artifact_dir=artifact_dir, env=env, record=record, registry=registry,
         command_log=CommandLog(path=os.path.join(artifact_dir, "commands.jsonl"), registry=registry),

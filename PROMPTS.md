@@ -76,6 +76,7 @@ transcripts.
 | 34 | `prompts/16-qa-step7-final.md` | QA | Final check as the reviewer: fresh-clone run, docs vs code |
 | 35 | `prompts/17-dev-step8-test-logs-and-asserts.md` | Dev | Step 8: every test logs its actions, waits and results; every assert in Expected/Actual form (`harness/check.py`) |
 | 36 | `prompts/18-qa-step8-test-logs-and-asserts.md` | QA | Check of step 8: the logs, the Expected/Actual messages, same outcomes, no secret in the logs |
+| 37 | `prompts/19-dev-step8b-log-fixes.md` | Dev | Fix the step 8 QA findings: less log noise, the last asserts in Expected/Actual form, missing step lines |
 
 R02 to R05 were given to the planning agent too, but they are copies of public
 spec pages, so they are listed here and not copied:

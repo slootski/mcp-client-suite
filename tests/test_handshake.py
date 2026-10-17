@@ -157,9 +157,9 @@ def assert_initialize_exchange(*, records, where):
                 holds=isinstance(params["capabilities"], dict))
     expect_in(what="%s: initialize params" % where, item="clientInfo", container=sorted(params))
     client_info = params["clientInfo"]
-    expect_true(what="%s: clientInfo.name" % where, expected="a non-empty string", actual=client_info,
+    expect_true(what="%s: clientInfo.name" % where, expected="a non-empty string", actual=client_info["name"],
                 holds=isinstance(client_info["name"], str) and bool(client_info["name"]))
-    expect_true(what="%s: clientInfo.version" % where, expected="a non-empty string", actual=client_info,
+    expect_true(what="%s: clientInfo.version" % where, expected="a non-empty string", actual=client_info["version"],
                 holds=isinstance(client_info["version"], str) and bool(client_info["version"]))
 
     # The fake's reply echoes the version, and the client accepted it (the
