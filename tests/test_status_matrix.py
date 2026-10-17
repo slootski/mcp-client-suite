@@ -20,7 +20,7 @@ Cases:
   5b. HTTP, no header, bare 401, no metadata      -> status recorded, not asserted     (record-only)
       An out-of-spec server: it breaks the MUST to publish Protected
       Resource Metadata (2025-11-25 basic__authorization.md:65). The client
-      follows the spec's MUST fallback and reports what it got; mcp.md:762
+      follows the spec's MUST fallback and reports what it got; mcp.md:764
       ("Needs authentication") assumes an OAuth server, so the status is
       compared with it record-only (run.json `documented_bare_401_status`),
       while the wire asserts (probe first, 401 on the MCP path) stay hard.
@@ -74,7 +74,7 @@ BARE_401_DISCOVERY_PATHS = (
     ("POST", REGISTER_PATH),
 )
 
-BARE_401_DOC = ("mcp.md:762: a 401/403 from a server you have not signed in to marks it as needing "
+BARE_401_DOC = ("mcp.md:764: a 401/403 from a server you have not signed in to marks it as needing "
                 "authentication (written for an OAuth server; this one breaks the spec MUST to publish "
                 "Protected Resource Metadata, 2025-11-25 basic__authorization.md:65)")
 REASON_GET_REDACTION = (
@@ -415,7 +415,7 @@ def test_http_bare_401_out_of_spec_server_status_recorded(free_sandbox):
     the discovery paths) and reports the failure it got (2.1.296: "✘
     Failed to connect — Dynamic Client Registration rejected (HTTP 404)").
     The wire checks are plain asserts (the probe, and the 401 on the MCP
-    path). The status is compared with mcp.md:762 record-only
+    path). The status is compared with mcp.md:764 record-only
     (record_documented, run.json `documented_bare_401_status`), and the
     OAuth discovery paths requested are recorded, not asserted."""
     name = "fake_http_bare401"

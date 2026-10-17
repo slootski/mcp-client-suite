@@ -1,32 +1,9 @@
-"""Checks shared by every model test (doc 11, doc 22).
-
-  gate            every server of the test is `connected` in system/init,
-                  else the test is inconclusive (pytest.skip), never a pass.
-  model_rejected  MODEL_ID was not accepted: stop the whole run.
-  d_passthrough   D (client fact, hard): each `tool_use` of a server tool
-                  reached the fake as exactly one `tools/call` with the same
-                  tool name and arguments == tool_use.input, no call reached
-                  it without a tool_use, and its tool_result text is what the
-                  fake itself sent for that JSON-RPC id.
-  assert_era, assert_tool_search_tool, assert_tools_advertised
-                  D: client facts that prove the pins worked (first message
-                  and initialize revision; ToolSearch in system/init tools;
-                  mcp__<server>__<tool> in system/init tools).
-  s_input         S (model fact, recorded): tool_use.input == the values the
-                  prompt fixed.
-  assert_every_call_has_a_tool_use
-                  D: no tools/call reached a fake without a tool_use of the
-                  same attempt. harness/model_flow.py runs it on every
-                  attempt, before any retry (docs/flake-policy.md).
-
-Correlation of tool_use to tools/call: the stream's tool_use.id is not on
-the wire in any documented field, so the first hard check compares the two
-sides as multisets of (tool name, arguments). 2.1.296 also puts
-`params._meta["claudecode/toolUseId"]` on tools/call (observed, not in the
-docs; observations.md). Each call is paired with its tool_use by that id;
-a call without it is paired by equal arguments, and only when exactly one
-tool_use matches. The pair gives the JSON-RPC id, and the fake's `sent`
-record for that id is the oracle for the tool_result text.
+"""Checks shared by every model test (doc 11, doc 22): the connected gate,
+the run stops (model_rejected, key_rejected), the D checks (hard asserts:
+d_passthrough, assert_every_call_has_a_tool_use, assert_era,
+assert_tool_search_tool, assert_tools_advertised) and the S input (s_input,
+recorded only). A tools/call is paired with its tool_use as
+pair_calls_to_uses says (docs/flake-policy.md, the toolUseId row).
 """
 
 import json
@@ -35,7 +12,8 @@ import logging
 import pytest
 
 from harness.check import expect_equal, expect_in, expect_not_in, expect_true, got
-from harness.constants import FIRST_MESSAGE_NEGOTIATION_UNSET, LEGACY_PROTOCOL_VERSION, NEGOTIATION_LEGACY
+from harness.constants import (API_KEY_REJECTED_STATUSES, API_RETRY_AUTH_FAILED, FIRST_MESSAGE_NEGOTIATION_UNSET,
+                               LEGACY_PROTOCOL_VERSION, NEGOTIATION_LEGACY)
 from harness.wire import message_method
 
 logger = logging.getLogger(__name__)
@@ -88,6 +66,24 @@ def model_rejected(*, stream, model):
         return "api_retry error %s for --model %s" % (MODEL_NOT_FOUND, model)
     if stream.init is not None and stream.init["model"] != model:
         return "system/init model is %r, asked for %r" % (stream.init["model"], model)
+    return None
+
+
+def key_rejected(*, stream):
+    """A reason when the API rejected the key, else None: result
+    `api_error_status` (observed on 2.1.296, null on success; not in
+    headless.md) or api_retry `error_status` (headless.md:247) is 401/403,
+    or api_retry `error` is authentication_failed (headless.md:249)."""
+    result = stream.result
+    if result is not None and "api_error_status" in result and result["api_error_status"] in API_KEY_REJECTED_STATUSES:
+        return "result api_error_status %s" % result["api_error_status"]
+    # The first 401/403 api_retry stops the run, even if a later retry would pass: fine, the
+    # suite sets ANTHROPIC_API_KEY, not apiKeyHelper (headless.md:238). A 403 billing_error lands here too.
+    for event in stream.events_of(event_type="system", subtype="api_retry"):
+        if "error" in event and event["error"] == API_RETRY_AUTH_FAILED:
+            return "api_retry error %s" % API_RETRY_AUTH_FAILED
+        if "error_status" in event and event["error_status"] in API_KEY_REJECTED_STATUSES:
+            return "api_retry error_status %s" % event["error_status"]
     return None
 
 

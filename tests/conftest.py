@@ -6,9 +6,8 @@ pass rates of repeated tests (harness/repeat.py), and the run-level gate
   * key set: a run in which ANY model item was skipped as inconclusive
     exits INCONCLUSIVE_EXIT_CODE (13), when pytest itself returned 0;
   * no key: model items are skipped, unless they were asked for on purpose
-    (SUITE_REQUIRE_KEY=1, or a `-m` expression that selects a model item):
-    then the run stops before any test with MODEL_TESTS_NEED_KEY_EXIT_CODE
-    (14);
+    (SUITE_REQUIRE_KEY=1, a `-m` that selects one, or only model items
+    selected): then the run stops before any test with exit 14;
   * every run prints "outcome counts" (xfailed apart from each kind of
     skip) and writes the same to outcomes.json (SUITE_OUTCOMES_FILE).
 """
@@ -293,13 +292,11 @@ def require_key_setting():
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
     """`model` tests need the key. trylast: `-m` / `-k` deselection has
-    already run, so items is what will run. Without the key:
-      * asked for on purpose (SUITE_REQUIRE_KEY=1, or a `-m` expression and
-        at least one selected model item): stop before any test with
-        MODEL_TESTS_NEED_KEY_EXIT_CODE, so a CI job whose secret is missing
-        cannot go green;
-      * otherwise: model items are skipped, not failed, so the free tests
-        still run on a machine with no key."""
+    already run, so items is what will run. Without the key, a run that
+    asked for model items on purpose (SUITE_REQUIRE_KEY=1, a `-m` that
+    selects one, or every selected item a model item, e.g. `-k <model
+    test>`) stops before any test with MODEL_TESTS_NEED_KEY_EXIT_CODE, so it
+    cannot go green; otherwise model items are skipped and free tests run."""
     required = require_key_setting()
     model_items = [item for item in items if MODEL_MARK in item.keywords]
     step(text="key gate: %s set %s, %s %s, -m %r, %d of %d selected item(s) are model items" % (
@@ -313,6 +310,9 @@ def pytest_collection_modifyitems(config, items):
     if config.option.markexpr and model_items:
         pytest.exit("-m %r selects %d model item(s) but %s is not set; no test ran" % (
             config.option.markexpr, len(model_items), API_KEY_ENV), returncode=MODEL_TESTS_NEED_KEY_EXIT_CODE)
+    if model_items and len(model_items) == len(items):
+        pytest.exit("all %d selected item(s) are model items but %s is not set; no test ran" % (
+            len(model_items), API_KEY_ENV), returncode=MODEL_TESTS_NEED_KEY_EXIT_CODE)
     skip = pytest.mark.skip(reason=NO_KEY_SKIP_REASON)
     for item in model_items:
         item.add_marker(skip)

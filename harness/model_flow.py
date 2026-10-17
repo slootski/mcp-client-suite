@@ -1,33 +1,23 @@
 """One model-driven check: run `claude -p` until the S trigger happened.
 
-run_until_triggered runs the prompt at most 1 + INCONCLUSIVE_RETRIES times
-(doc 22): an attempt is inconclusive when a server of the test is not
-`connected` in system/init (the gate) or the model made no tool_use with
-one of the trigger names (with require_all_triggers: not one tool_use for
-EACH trigger name). Only then is it retried, in a fresh CLAUDE_CONFIG_DIR,
-and every attempt is charged and recorded in run.json
-(`observations.model_runs`, with the reason it was retried). A D failure is
-never retried: the D asserts run after this returns.
+run_until_triggered runs the prompt at most 1 + retries times (doc 22). An
+attempt is inconclusive when a server of the test is not `connected` in
+system/init (the gate) or the model made no tool_use with a trigger name
+(require_all_triggers: one for EACH name); only then is it retried, in a
+fresh CLAUDE_CONFIG_DIR. Each attempt is charged; it is recorded in run.json
+(`observations.model_runs`, with its retry reason) unless its stream shows
+the API rejected the key or the model: then the run stops at once
+(API_KEY_REJECTED_EXIT_CODE or rejected_exit_code), no retry.
 
-D checks run here, on every attempt, before the retry decision, in this
-order. A retry would replace the attempt's records and hide them, so none
-of them may wait for a "triggered" attempt. The attempt is written to
-run.json (with its per-fake tools/call count) and its stream file stays in
-the artifacts before any of them can fail.
-  1. (QA step 4) every tools/call that reached a fake in the attempt
-     belongs to a tool_use of that attempt's stream
-     (model_checks.assert_every_call_has_a_tool_use). A call without a
-     tool_use is a client fact, not an S miss.
-  2. (QA step 5) the run ends with a `result` event. A client that exits
-     after an error or a crash (system/init and a first tool_result, then
-     no next tool_use and no result) is a D failure, not an inconclusive
-     attempt: without this assert it was retried and then skipped, and
-     the suite exited 0.
+D checks run on every attempt, after it is recorded and before the retry
+decision, so a retry never hides them; a D failure is never retried
+(docs/flake-policy.md):
+  1. (QA step 4) every tools/call that reached a fake belongs to a tool_use
+     of the attempt (model_checks.assert_every_call_has_a_tool_use).
+  2. (QA step 5) the run ends with a `result` event: a client that exits
+     after an error or a crash is a D failure, not an inconclusive attempt.
   3. the test's own attempt_checks, each called as
-     check(stream=<Stream>, records=<{server: wire records}>). A test
-     passes the D facts it can judge as soon as some tool_use exists
-     (e.g. D20/T1: the crashed call's error tool_result and its time
-     bound, whenever the crash tool_use exists); [] for none.
+     check(stream=<Stream>, records=<{server: wire records}>); [] for none.
 """
 
 import logging
@@ -36,11 +26,13 @@ from dataclasses import dataclass
 import pytest
 
 from harness.check import expect_true, got, step
+from harness.constants import API_KEY_ENV, API_KEY_REJECTED_EXIT_CODE
 from harness.model_checks import (
     assert_every_call_has_a_tool_use,
     era_seen,
     gate_problem,
     init_summary,
+    key_rejected,
     model_rejected,
     result_summary,
     tools_call_records,
@@ -105,6 +97,11 @@ def run_until_triggered(*, sandbox, ledger, test_id, prompt, model, max_turns, m
         )
         total_charged = round(total_charged + run.charged_usd, 6)
         stream = run.stream
+        key_problem = key_rejected(stream=stream)
+        if key_problem is not None:
+            got(what="%s: API key rejected" % run.label, value=key_problem)
+            pytest.exit("API key rejected: %s; no retry (check %s)" % (key_problem, API_KEY_ENV),
+                        returncode=API_KEY_REJECTED_EXIT_CODE)
         rejected = model_rejected(stream=stream, model=model)
         if rejected is not None:
             pytest.exit("model %s not accepted: %s" % (model, rejected), returncode=rejected_exit_code)
