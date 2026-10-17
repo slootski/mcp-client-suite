@@ -31,10 +31,36 @@ transcripts.
 5. **The suite's own model calls** use `claude-haiku-5-5`
    (`harness/constants.py`, `MODEL_ID`), with `--max-turns 4` and
    `--max-budget-usd 0.25` per run.
-6. **The human's own messages** to the orchestrating session were short
-   steering lines in chat (the order of work, scope cuts, the spend cap,
-   "go on"), not task specs. They are not listed here: every task an agent
-   worked from is one of the files below, as sent.
+6. **The candidate's own messages** to these sessions are listed
+   verbatim in [The candidate's own prompts](#the-candidates-own-prompts)
+   below. Most are short steering lines; they are all the candidate typed
+   into these sessions.
+
+## Who wrote what
+
+- **Build prompts 01 to 19 were written by the orchestrating agent**, not
+  by the candidate. The candidate wrote none of their text. The
+  candidate's part in the build is the messages listed below.
+- **Decisions that were the candidate's:**
+  - The plan: its structure (one doc per topic, docs 11 to 23, every idea
+    tagged P0/P1/P2, doc 24 as the handoff) and the plan-review prompt
+    that was run 5 times on it.
+  - The Dev/QA loop: two agents, Dev then QA, step by step (session 3,
+    10-17 00:07).
+  - The scope cuts: doc 24 cut the build to 10 items, with question 2 and
+    question 3 in depth.
+  - The spend cap: "spend 20$ if you need, but try not to be a spender"
+    (session 3, 10-17 00:58). The suite's own cap, `SUITE_BUDGET_USD`
+    $5.00, sits inside it.
+  - The no-defaults rule: no default parameter values, every argument
+    passed by keyword, values as named constants. It comes from the
+    candidate's global Claude Code instructions, which every session
+    loaded, not from a chat message.
+  - The logging rule: every action, returned status and wait is logged,
+    and every assert reads `Expected: ... Actual: ...` (session 3, 10-17
+    12:01 and 12:16). Build prompts 17 to 19 turned it into code.
+- **Written by agents:** the code, the build prompts, and the first
+  drafts of README.md, PLAN.md and this file (build step 7).
 
 ## The prompts, in order
 
@@ -77,6 +103,7 @@ transcripts.
 | 35 | `prompts/17-dev-step8-test-logs-and-asserts.md` | Dev | Step 8: every test logs its actions, waits and results; every assert in Expected/Actual form (`harness/check.py`) |
 | 36 | `prompts/18-qa-step8-test-logs-and-asserts.md` | QA | Check of step 8: the logs, the Expected/Actual messages, same outcomes, no secret in the logs |
 | 37 | `prompts/19-dev-step8b-log-fixes.md` | Dev | Fix the step 8 QA findings: less log noise, the last asserts in Expected/Actual form, missing step lines |
+| 38 | `mcp-repo-fix-prompt.md` (kept outside the repo) | orchestrating agent | Apply the fixes of the hiring-panel repo review: run-level gate, secret handling, findings wording, the candidate's own prompts, the time spent. Given by the candidate to a new Claude Code session, which ran a Dev and a QA agent per wave |
 
 R02 to R05 were given to the planning agent too, but they are copies of public
 spec pages, so they are listed here and not copied:
@@ -112,3 +139,181 @@ address was found. The hits are the word "token" in its normal sense
 (model tokens, OAuth token refresh) and the `sk-ant` pattern named in
 prompt 15's own instructions. Absolute home paths (`/Users/islootski/...`)
 stay as they were.
+
+## The candidate's own prompts
+
+Every chat message the candidate typed into the Claude Code sessions of
+this work, verbatim, typos kept, in order. Taken from the session
+transcripts: user messages with plain text only. Left out: tool results,
+system and command blocks, agent hand-backs, and the summaries Claude
+Code writes when a session is compacted (none of these were typed by the
+candidate). Changes: one message held the API key and is dropped; one
+work e-mail address is removed; one pasted `run.json` is replaced by a
+note. A few messages are about another project that ran in parallel
+(`itbr`); they are kept, since they are part of the same sessions. The
+plan docs 00 and 11 to 24 were written and revised outside these Claude
+Code sessions (session 2 shows the review fixes being copied out "to
+claude"); those chats are not listed. The docs as used are in
+`prompts/plan/`. This repo-fix session (row 38) is not listed here.
+
+### Session 1: Plan review, round 1
+
+Claude Code session `890dc2e7`, 2026-10-16 17:51 to 2026-10-16 17:51 (local time, UTC+3), 1 message(s).
+
+- 10-16 17:51: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
+
+### Session 2: Plan reviews, rounds 2 to 5, and the docx-to-md conversion of the plan
+
+Claude Code session `e231d4fc`, 2026-10-16 17:55 to 2026-10-16 21:46 (local time, UTC+3), 17 message(s).
+
+- 10-16 17:55: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
+- 10-16 18:34: `how to run the fix revew?`
+- 10-16 18:35: `copy to clip ill past to claude`
+- 10-16 18:36: `print the revwe in short points to screen`
+- 10-16 19:04: `copy step 2 to clip`
+- 10-16 19:56: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
+- 10-16 20:11: `copy to clip promt for claude to fix the revew demends`
+- 10-16 21:01: `did you run the verefication`
+- 10-16 21:29: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
+- 10-16 21:34: `how critical thery are`
+- 10-16 21:35: `give me the the link to the documents`
+- 10-16 21:35: `paht`
+- 10-16 21:36: `what is the test plan to implement`
+- 10-16 21:38: `full paht to #1`
+- 10-16 21:39: `would it easer to cluade to read docx or md file?`
+- 10-16 21:39: `convert the docx files to md and rplace the spaces to _`
+- 10-16 21:46: `where are the new md file`
+
+### Session 3: The build: the orchestrating session that wrote build prompts 01-19 and ran the Dev and QA agents
+
+Claude Code session `b8db9188`, 2026-10-17 00:05 to 2026-10-17 14:13 (local time, UTC+3), 73 message(s).
+
+- 10-17 00:05:
+
+  ```text
+   i have a task for hoem assiment
+  ```
+- 10-17 00:07:
+
+  ```text
+  i thing of 2 agents - qa and dev
+  and tye will run in documentation in loop - ones dock is finish 
+  going to next one
+  
+  This is the home assimet:
+  /Users/islootski/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/
+  
+  please recomed what should id do.
+  dont assume check
+  ```
+- 10-17 00:10: `list what you need me to install`
+- 10-17 00:14: `check if you missing somthing to install?`
+- 10-17 00:26: `check now`
+- 10-17 00:27: `check now, i allow you to compoit what is missing`
+- 10-17 00:28: `skip the login to github for now`
+- 10-17 00:30: `go`
+- 10-17 00:31: `use the api key for itbr from my_itbr`
+- 10-17 00:34:
+
+  ```text
+  what key you need?
+  where can i find it?
+  ```
+- 10-17 00:35: `can you get do it for me from ?`
+- 10-17 00:37: `look on the screen now, what should i do?`
+- 10-17 00:42: `look at my screen`
+- 10-17 00:42: `what now?`
+- 10-17 00:46: `look right now, what you see with the auto reload`
+- 10-17 00:47: `no`
+- 10-17 00:47: `now`
+- 10-17 00:51: *[dropped: this message held the API key]*
+- 10-17 00:51: `what to do now`
+- 10-17 00:54: `look at the key`
+- 10-17 00:54: `now the key is in`
+- 10-17 00:54: `now the key is in ~/.config/bay-mcp/key`
+- 10-17 00:56: `is there anything you need? can i go sleep?`
+- 10-17 00:56: `go on without me`
+- 10-17 00:58:
+
+  ```text
+  spend 20$ if you need, but try not to be a spender - use the money wizly
+  good night
+  ```
+- 10-17 09:16: `go on - dont stop for qastions`
+- 10-17 11:43: `how much did we spend so far`
+- 10-17 11:44: `how much time left?`
+- 10-17 11:45: `how much time left?`
+- 10-17 11:46: `what are you doing in one line>?`
+- 10-17 11:46: `what are you working on?`
+- 10-17 11:47: `i need to creat repor for my assing did you created it?`
+- 10-17 11:47: `did you generated the code?`
+- 10-17 11:48: `are you using pytest?`
+- 10-17 11:48: `run all test show me pytest html report`
+- 10-17 11:52: `when done ipen it`
+- 10-17 11:55: `i open passed test what i see is No log output captured.`
+- 10-17 11:56: `does the has logger - he pytest project ?`
+- 10-17 12:01: `log format should look like that: 11:58:01.34 2026-10-17 [DEBUG   ] runner.py:42 connect() - Connecting to server`
+- 10-17 12:16:
+
+  ```text
+  the rool for logs is the followng:
+  each test  action should have log 
+  each status return staus should have log
+  when you wait  - log like start waitiong for ...command..   when the waiting is done -> waiting doen the responce is...
+  the genaral idia is that the test tell what did he did and what did it recive for his requast
+  the assertion should be self explanagle like Expected:... Acutioal
+  ```
+- 10-17 12:35: `is anygihg running?`
+- 10-17 12:35: `how much left?`
+- 10-17 12:35: `can you parallize the work?`
+- 10-17 12:39: `go on`
+- 10-17 12:42: `give status`
+- 10-17 12:47: `what is done`
+- 10-17 12:49: `what is running¿`
+- 10-17 12:50: `you are working on home assingmet or itbr?`
+- 10-17 12:50: *[a pasted `run.json` from one test's artifacts with the question "what does this big json mand:"; the JSON is omitted]*
+- 10-17 12:52: `1`
+- 10-17 12:53: `give me a path to python project`
+- 10-17 12:53: `full`
+- 10-17 12:57: `can you open ?`
+- 10-17 12:58: `run git init and add gitigrnore with all relevat parts`
+- 10-17 12:59: `create fist commit with "Good luch!!!" mesate`
+- 10-17 13:01: `i need you to push it to gihub mail iliasltski@gmail.com`
+- 10-17 13:04:
+
+  ```text
+  i told you once:
+  this is my work mac so mainly must work with [work e-mail address removed]
+  in the back ground it should have the option to work with my gmail as well and you set it to work
+  check convrsations
+  ```
+- 10-17 13:05: `check with it`
+- 10-17 13:06: `done`
+- 10-17 13:07: `ok`
+- 10-17 13:13:
+
+  ```text
+  i need you to look at the project, it is my homeassinmet for intervew.
+  i need you to go over project collect experteeds you need to do a  revewer 
+  it is intervew for automation senior engenneer, fist man an futur manage of the team
+  
+  imporve the pormt 
+  ask qastions
+  ```
+- 10-17 13:16: `make it so it will run from vanila claude`
+- 10-17 13:18: `is it ready?`
+- 10-17 13:21: `how much left?`
+- 10-17 13:45: `does the score followied with revew?`
+- 10-17 13:47: `what is the best way to run the revew fix?`
+- 10-17 14:10: `give me cmd to clip to run ther revew fixes`
+- 10-17 14:10: `will vanila claude know how to do that?`
+- 10-17 14:11: `-`
+- 10-17 14:11:
+
+  ```text
+  ⏺ The P2 screen QA is still in its long browser test run, so I'm waiting on four screen QA agents (P2, P3, P5, P6a). All develop
+  quote>
+  ```
+- 10-17 14:12: `no session strted - give me full cmd`
+- 10-17 14:12: `give me to clip full cmd that starts with cd ...`
+- 10-17 14:13: `how much time it sould run?`

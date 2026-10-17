@@ -15,11 +15,24 @@ Which results are the same on every run, and how the suite treats each kind
   to `s-rate.json` (per rate item), `s-rates.json` (per run) and printed in
   the terminal summary.
 - **Record only**: kept in `run.json` or the rate files, never fails a test.
-  Used for the model's wording, and for undocumented client behavior that
-  the docs do not promise either way.
-- **Strict xfail**: a documented behavior that 2.1.296 does not show
-  (`xfail(strict=True)` with the doc line, and an `observations.md` entry).
-  It fails the run on the day it starts to pass.
+  Used for the model's wording, for undocumented client behavior that
+  the docs do not promise either way, and for a doc line the product is
+  not held to: a doc gap (a crashed stdio server is started again on the
+  next call, mcp.md:377) or an out-of-spec server (a bare 401 with no
+  OAuth metadata, mcp.md:762). Those two are compared with the doc line by
+  `record_documented` (`harness/known_defects.py`): a `record ... ->
+  MATCHES` or `-> DIFFERS` log line and a `run.json` key, never a failure.
+  The wire asserts of the same tests stay hard.
+- **Strict xfail**: a documented behavior that 2.1.296 does not show and
+  that a product fix would flip (`xfail(strict=True)` with the doc line,
+  and an `observations.md` entry). It fails the run on the day it starts
+  to pass. Seven items: the idle timeout (4 items), T10 variant A, T10
+  variant B, and `claude mcp get` redaction.
+
+"Era" in the tables below means the protocol version negotiation mode:
+"legacy" = `MCP_PROTOCOL_NEGOTIATION=legacy` (`initialize` first, pinned in
+model tests); "unset" = the user default (a `server/discover` probe
+first). Both end at 2025-11-25, the only revision the fakes speak.
 
 Sampling (temperature) cannot be set from outside the CLI. This is why the
 in-depth tests check wire facts (D), and why model facts get a rate instead
@@ -35,9 +48,10 @@ of a hard assert (doc 22 test 3).
 | Any attempt, before the retry decision: the stream has no `result` event (the client ended the run after `system/init`, e.g. right after an error or a crash) | D failure, never inconclusive: the item fails at once, no retry (`harness/model_flow.py`, QA step 5). Before this, a client that died after the first `tool_result` (no next `tool_use`) was retried, then skipped, and the suite exited 0. The same place runs each test's own `attempt_checks`: D16 judges the failing tool's error `tool_result` and D20/T1 the crashed call (one `tool_result`, `is_error`, the 5 s bound) on every attempt where that `tool_use` exists. Proof: `tests/test_harness_offline.py` replays recorded D16/T1, D16/T2 and D20/T1 runs cut after the first `tool_result` (QA's `client_died_after_*` mutation), plus a crash run with its error `tool_result` removed: each FAILS (a plain `AssertionError`, not a skip and not the crash test's `DocumentedBehaviorMismatch`); with the two checks removed the same cases skip or pass. |
 | Still inconclusive after the retry | The item is skipped with reason `inconclusive: ...`, never passed. In a repeated test that repeat counts as an S miss (all rated facts false). |
 | A repeat ended (an exception) before it recorded its S facts | That repeat counts as an S miss, with the reason in `s-rate.json`. |
-| Fewer than `REPEATS` repeats ran in this session (a `-k` subset) | The rate item is skipped as inconclusive: a partial sample is not judged. A `-k` that selects only rate items therefore exits 13 when the key is set (next rows); with no key every model item is skipped as "not set", not as inconclusive, and the run exits 0. The rate item relies on pytest's file order (repeats first); no reordering plugin is installed. |
+| Fewer than `REPEATS` repeats ran in this session (a `-k` subset) | The rate item is skipped as inconclusive: a partial sample is not judged. A `-k` that selects only rate items therefore exits 13 when the key is set (next rows); with no key every model item is skipped as "not set", not as inconclusive, and the run exits 0 (unless `SUITE_REQUIRE_KEY=1`: exit 14). The rate item relies on pytest's file order (repeats first); no reordering plugin is installed. |
 | Every repeat of a test was inconclusive | The rate item is skipped as inconclusive. |
-| The key is set, and every model item of the run was inconclusive | The run exits 13 (`ALL_INCONCLUSIVE_EXIT_CODE`) and prints `all model tests inconclusive`. Such a run proves nothing about the client. |
+| The key is set, and any model item of the run was skipped as inconclusive (pytest itself returned 0) | The run exits 13 (`INCONCLUSIVE_EXIT_CODE`). The items are printed under "model tier verdict" and listed in `outcomes.json` (`inconclusive_model_items`). An inconclusive item proved nothing about the client, so the run is not green. |
+| No key, and model items were asked for on purpose: `SUITE_REQUIRE_KEY=1` (whatever is selected), or a `-m` expression that selects a model item | The run stops before any test with exit 14 (`MODEL_TESTS_NEED_KEY_EXIT_CODE`), so a CI model job whose secret is missing cannot go green. Plain `./run.sh` with no key still skips the model items and exits 0. |
 | A D assert fails | The item fails. It is not retried, and the other repeats still run. |
 | The ledger total would pass `SUITE_BUDGET_USD` | The run stops with exit 11 before the next model run. |
 | `MODEL_ID` is not accepted | The run stops with exit 12. |
@@ -63,10 +77,13 @@ one pytest item per repeat, each with a fresh config dir and fresh values).
 | D12/T3s | The next command in the same config dir skips the probe; the verdict file is in `$CLAUDE_CONFIG_DIR/state/`; a fresh config dir probes again | none | D, hard assert | 5/5 |
 | D12/T4 + D13/T3 status matrix | Status strings in `claude mcp list` and `get` (`✔ Connected`, `✘ Failed to connect`, `! Needs authentication`), the 401 detail, no `Issue` line when healthy | none | D, hard assert | 1 |
 | status matrix | The wire log shows the real connection attempt (handshake order, header hash, no OAuth discovery with a working header, no Authorization sent when none is configured) | none | D, hard assert | 1 |
-| status matrix | `claude mcp get` redacts a configured header; a bare 401 shows `! Needs authentication` | none | Strict xfail (2.1.296 differs from the docs) | 1 |
+| status matrix | `claude mcp get` redacts a configured header (changelog.md:5864) | none | Strict xfail (2.1.296 prints it) | 1 |
+| status matrix `test_http_bare_401_out_of_spec_server_status_recorded` | A bare 401 with no OAuth metadata shows `! Needs authentication` (mcp.md:762). The server breaks the spec MUST to publish Protected Resource Metadata (2025-11-25 basic__authorization.md:65) | none | Record only (`documented_bare_401_status`; 2.1.296 shows `✘ Failed to connect`). The probe and the 401 on the MCP path stay hard asserts | 1 |
 | status matrix | A stdio server that dies at start is spawned twice per command | unknown | Record only (`spawns_per_command`) | 1 |
 | D13/T4 + D23/T11 credentials | Inherited credentials reach a stdio server by default; under `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` the listed names are stripped and the table's exceptions kept; `--env` values reach it | none | D, hard assert (fingerprints) | 1 |
 | credentials | A credential-named `--env` value survives the scrub | not documented | Record only (`configured_env_under_scrub`) | 1 |
+| credentials `test_stdio_allowlist_env_passes_only_baseline_and_configured_env` | Under `CLAUDE_CODE_MCP_ALLOWLIST_ENV=1` (env-vars.md:334) the server connects; its configured `MY_SERVICE_TOKEN` reaches it; `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `NPM_TOKEN`, `MY_INHERITED_TOKEN` and the plain `MY_PLAIN_SETTING` do not | none | D, hard assert (fingerprints) | 1 |
+| credentials (allowlist) | The env names the server got (the baseline), and whether `GITHUB_TOKEN` and `CLAUDE_CONFIG_DIR` are among them | not documented | Record only (`allowlist_env_names`) | 1 |
 | credentials (remote) | `${ANTHROPIC_API_KEY}` / `${NPM_TOKEN}` in a header or url are sent empty; an own variable is expanded | none | D, hard assert | 1 |
 | D14/T1, T2, D23/T2 smoke | Gate: the test's servers are `connected` in `system/init` | none, else inconclusive | Gate (inconclusive, retried once) | 1 |
 | smoke | Pins took effect: first message `initialize` asking 2025-11-25; `ToolSearch` in `system/init` tools only with tool search on (T1, D23/T2: absent; T2: present) | none | D, hard assert | 1 |
@@ -104,7 +121,7 @@ one pytest item per repeat, each with a fresh config dir and fresh values).
 | D20/T1 | The first fake process got one `tools/call` (`echo_canary`), logged `exit` (code 3) for it and sent no reply | none | D, hard assert | 3/3 |
 | D20/T1 | No hang: the error `tool_result`'s stream `timestamp` is at most `CRASH_FAILURE_BOUND_S` = 5 s after the fake's `exit` epoch (measured 23-24 ms; a missed exit would wait for the 30 s `MCP_TOOL_TIMEOUT`) | ms jitter | D with a bound | 3/3 |
 | D20/T1 | The crashed `tool_use` has exactly one `tool_result`, `is_error: true`; no process started between the crash and the next `tool_use` (no eager restart); every later call got one `tool_result`; the `result` event is the last line | none | D, hard assert | 3/3 |
-| D20/T1 | One spawn in the whole run (mcp.md:377: stdio servers are not reconnected). 2.1.296 starts the server again on the next call | none | Strict xfail (`DocumentedBehaviorMismatch`, raised last, after every hard assert) | 3/3 |
+| D20/T1 | One spawn in the whole run (mcp.md:377: stdio servers are not reconnected). 2.1.296 starts the server again on the next call, as the 2026-07-28 spec's SHOULD asks (basic__transports__stdio.md:116): a doc gap | none | Record only (`documented_no_restart`, recorded last, after every hard assert) | 3/3 |
 | D20/T1 `..._same_every_run` | The 3 runs have the same signature: spawns (up to 2), same parent pid, methods per spawn, the crashed call's text and `is_error`, the first later call's result and process, the hook's `error` (ids masked; further model calls are S and left out) | none | D, hard assert (skipped as inconclusive when fewer than 3 runs finished) | 1 |
 | D20/T1 | The model called `echo_canary`, then `echo` after the failure | model | S trigger (both needed), inconclusive otherwise; no rate | 3 |
 | D20/T1 | Time values, the respawn delay, the hook inputs, the final answer | jitter / model | Record only (`d_view` in `run.json`) | 3 |
@@ -135,7 +152,7 @@ one pytest item per repeat, each with a fresh config dir and fresh values).
 | every run | `claude --version` == 2.1.296 (version gate) | none | Hard: the run stops with exit 10 before any test | every run |
 | every model attempt | The stream ends with a `result` event (checked before the retry decision) | none | D, hard assert | every attempt |
 | every model run | `total_cost_usd` is in the `result` event; a run with no `result`, no `total_cost_usd`, or an exception is charged the per-run cap | none | Hard (test fails when the key is missing from `result`) | every run |
-| every run | No artifact holds the API key or a generated test credential (per-test scan and entrypoint scan, `--debug-file` included) | none | Hard assert; a leaking file is not kept | every run |
+| every run | No artifact holds the API key or a generated test credential (per-test scan and entrypoint scan, `--debug-file` included); the live key is recorded only as `{"set": true}`, never as a hash | none | Hard assert; a leaking file is not kept, and the run exits 1 | every run |
 
 ## Residual risks
 

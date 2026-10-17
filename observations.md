@@ -106,15 +106,53 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   the server runs with `KEY=value` in its environment. So this is not a
   documented fact either way: the test records it (`run.json` key
   `observations.configured_env_under_scrub`) and asserts nothing about it.
-- bubblewrap is only checked for presence. QA (step 2) put a logging shim
-  in place of `bwrap`: 2.1.296 never called it. An `exit 1` stub in its
-  place still gave a scrubbed env. So in this container the scrub is done
-  by Claude Code itself, bwrap is never run, and the "isolation" the error
-  message names is not in effect. The scrub test needs no extra container
-  privileges.
-- Evidence: one-off run in a scratch image (message above), and every run of
+- What was tested about bwrap: for stdio MCP spawns with `sandbox` off,
+  2.1.296 checks that bwrap exists but does not run it. The probe
+  `evidence/2026-10-17-bwrap-probe.sh` (output in
+  `evidence/2026-10-17-bwrap-probe.txt`) puts a logging shim in place of
+  `/usr/bin/bwrap`, checks the shim logs a call (`bwrap --version`), then
+  runs `claude mcp add` and `claude mcp list` for a stdio fake in three
+  cases: control (no setting), scrub (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`)
+  and allowlist (`CLAUDE_CODE_MCP_ALLOWLIST_ENV=1`). The shim was called 0
+  times in each, and in the scrub case `NPM_TOKEN` and
+  `MY_INHERITED_TOKEN` were still gone from the server's env. Then it removes bwrap:
+  the scrub case exits 1 with the error above; the allowlist case still
+  connects. So the scrub is done by Claude Code itself in this setup, and
+  the scrub test needs no extra container privileges.
+- Not tested: Bash tool subprocesses, which env-vars.md:567 names for the
+  PID-namespace isolation (no Bash tool runs in the probe), and anything
+  with the `sandbox` setting on.
+- Evidence: the probe above, and every run of
   `tests/test_credentials.py::test_stdio_env_scrub_strips_inherited_credentials`
   (`run.json` key `observations.credential_env_seen`).
+
+## 2026-10-17, Claude Code 2.1.296: `CLAUDE_CODE_MCP_ALLOWLIST_ENV=1` does what env-vars.md:334 says
+
+- Doc: env-vars.md:334: "spawn stdio MCP servers with only a safe baseline
+  environment plus the server's configured `env`, instead of inheriting
+  your shell environment". This is the MCP-specific control; the scrub
+  (env-vars.md:406) covers all subprocesses.
+- What the server got (one spawn each for `claude mcp list` and `claude
+  mcp get`, same names in both): `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
+  `CLAUDE_PROJECT_DIR`, `HOME`, `LC_CTYPE`, `PATH` (the baseline), plus
+  its configured `--env` values: the fake's own `FAKE_*` settings and
+  `MY_SERVICE_TOKEN` (fingerprint equal to the value given).
+- What was dropped: every inherited variable the test set:
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `NPM_TOKEN`,
+  `MY_INHERITED_TOKEN`, the plain `MY_PLAIN_SETTING` (which the scrub
+  keeps, so this tells the two apart), and also `GITHUB_TOKEN` and
+  `CLAUDE_CONFIG_DIR`. The server shows `✔ Connected`.
+- Needs no bubblewrap: in `evidence/2026-10-17-bwrap-probe.txt` (case
+  `allowlist-no-bwrap`) the server connects with bwrap removed, with the
+  same env names.
+- Test: `tests/test_credentials.py::test_stdio_allowlist_env_passes_only_baseline_and_configured_env`
+  (free). Asserted: connected, `MY_SERVICE_TOKEN` reaches the server, the
+  five inherited names above are absent. Recorded, not asserted (the doc
+  does not list the baseline): every env name (`run.json` key
+  `observations.allowlist_env_names`), and whether `GITHUB_TOKEN` and
+  `CLAUDE_CONFIG_DIR` are among them.
+- Evidence: `artifacts/20261017T120316Z-26391/tests/tests_test_credentials.py_test_stdio_allowlist_env_passes_only_baseline_and_configured_env/run.json`
+  (passed).
 
 ## 2026-10-17, Claude Code 2.1.296: credential variables in a remote url/header
 
@@ -234,6 +272,10 @@ run the named test with `./run.sh -k <test>` to get your own copy in
 - Evidence: `artifacts/20261016T233158Z-57265/tests/*right_tool*_0/wire-calc*.jsonl`,
   record `started`, key `credential_env` (fingerprints only; the value is
   never logged).
+- Since commit 4188004 the suite no longer writes a fingerprint of the
+  live key: model runs record it as `{"set": true}` only, so a new run
+  shows the key's presence, not its sha8. The run cited above predates
+  that.
 
 ## 2026-10-17, suite: the API key no longer goes into the container config
 
@@ -356,6 +398,11 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   So 2.1.296 does what the new spec asks (lazily, on the next call) and
   not what its own doc says. Test: strict xfail on "one spawn"
   (`DocumentedBehaviorMismatch`), after every hard assert.
+- Now recorded, not xfailed (commit 4188004): mcp.md:377 sits under
+  "Automatic reconnection", so it is about eager reconnects, which 2.1.296
+  does not do; the lazy restart is what the 2026-07-28 spec asks. A doc
+  gap, not a defect: a strict xfail would only pass if the client got
+  worse. `run.json` key `observations.documented_no_restart`.
 - Doc 20 test 2 (a crash while idle) was not seen: the fake only exits
   with a call in flight.
 - Evidence: `artifacts/20261017T062932Z-22649/tests/tests_test_crash.py_*`
@@ -393,7 +440,8 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   `tool_result` removed (but a `result` kept) fails on the attempt check.
   With both checks removed (scratch copy) the same 4 cases skip or return
   as inconclusive. The unmutated recordings pass every D check; the crash
-  one ends at its documented strict xfail.
+  one ends at its documented strict xfail (since commit 4188004 it records
+  the restart instead: `test_crash_recorded_run_passes_and_records_the_restart`).
 
 ## 2026-10-17, Claude Code 2.1.296: D19 the MCP tool idle timeout fires on a 30 s tick, and no cancel is sent
 
@@ -562,9 +610,19 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   (HTTP 404)`, not `! Needs authentication`.
 - Differs from: mcp.md:762 ("either status code flags it in `/mcp`"), which
   does not depend on OAuth metadata.
-- Test: `tests/test_status_matrix.py::test_http_bare_401_no_header_needs_authentication`.
+- Test: `tests/test_status_matrix.py::test_http_bare_401_out_of_spec_server_status_recorded`
+  (named `test_http_bare_401_no_header_needs_authentication` before commit
+  4188004).
   The wire facts are plain asserts (the `server/discover` probe first, a
-  `401` with no auth on every MCP request); the status line is a strict
-  xfail. The OAuth discovery paths the client then tries are recorded in
-  `run.json` (`oauth_discovery_paths_requested`), not asserted.
+  `401` with no auth on every MCP request). The OAuth discovery paths the
+  client then tries are recorded in `run.json`
+  (`oauth_discovery_paths_requested`), not asserted.
+- Now recorded, not xfailed (commit 4188004): the server breaks the spec
+  MUST to publish Protected Resource Metadata (2025-11-25
+  basic__authorization.md:65), and the client follows the spec's fallback
+  and reports what it got. mcp.md:762 assumes an OAuth server. So the
+  status is compared with the doc line record-only (`run.json` key
+  `observations.documented_bare_401_status`); a compliant server (401 with
+  metadata) gets `! Needs authentication` and
+  `test_http_no_header_needs_authentication` passes.
 
