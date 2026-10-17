@@ -7,14 +7,15 @@ logs `tool_executed`, so "the server never saw the call" is read from the
 fake's own log. Every run passes `--permission-prompts none`
 (harness/model_run.py).
 
-T9: fakes/guard_hook.py through `--settings`, `--allowedTools "mcp__guard__*"`;
-cases deny, ask, matcher_without_wildcard, exit1_default, exit1_on_failure_block.
+T9: fakes/guard_hook.py through `--settings`; cases deny, ask, allow,
+matcher_without_wildcard, exit1_default, exit1_on_failure_block.
 T10: deny rule, no-allow-rule control, variant A (allow scope) and variant B
-(deny scope), A and B strict xfails for 2.1.296 defects. Detail: PLAN.md
-D23/T9 and D23/T10; retries and inconclusive items: docs/flake-policy.md;
+(deny scope), A and B strict xfails for 2.1.296 defects. MCP server policy:
+deniedMcpServers / allowedMcpServers in inline `--settings`. Detail: PLAN.md;
 offline replays: tests/test_harness_offline.py.
 """
 
+import json
 import os
 import secrets
 
@@ -41,7 +42,7 @@ from harness.constants import (
 from harness.check import expect_equal, expect_true, got, step
 from harness.error_checks import event_epoch
 from harness.fakes_ctl import STDIO_FAKE_SCRIPT
-from harness.hooks import guard_hook_settings_args, read_hook_log
+from harness.hooks import SETTINGS_FLAG, guard_hook_settings_args, read_hook_log
 from harness.known_defects import DocumentedBehaviorMismatch, expect_documented
 from harness.mcp_setup import PYTHON, stdio_fake_env
 from harness.model_checks import (
@@ -56,6 +57,7 @@ from harness.model_checks import (
 )
 from harness.model_flow import run_until_triggered
 from harness.model_run import allowed_tools_for, stdio_server_entry
+from harness.wire import read_records
 
 pytestmark = [pytest.mark.model, pytest.mark.timeout(MODEL_TEST_TIMEOUT_S)]
 
@@ -76,34 +78,51 @@ ACTION_PASS = "pass"
 ACTION_DENY = "deny"
 ACTION_EXIT1 = "exit1"
 ACTION_ASK = "ask"
+ACTION_ALLOW = "allow"
 HOOK_MODE_DENY = "deny"
 HOOK_MODE_ASK = "ask"
+HOOK_MODE_ALLOW = "allow"
 HOOK_MODE_FAIL = "fail"
 INIT_SUBTYPE = "init"
 PERMISSION_DENIED_SUBTYPE = "permission_denied"
 
+GUARD_ALL = allowed_tools_for(servers=[GUARD])
+LIST_ONLY = mcp_tool_name(server=GUARD, tool=LIST)
+
 # hook_action None: the hook must not run. delete_reaches_server False: no
 # tools/call for delete_all, one error tool_result for its tool_use.
+# denied_events: `permission_denied` system events per delete_all tool_use
+# (headless.md:333; 2.1.296 sends one for ask only).
 T9_CASES = {
     # deny and ask: the reason is in the tool_result (hooks.md:1934; for ask
     # because nobody can answer the prompt in `-p`).
-    "deny": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_DENY, "handler_fields": {},
-             "hook_action": ACTION_DENY, "delete_reaches_server": False},
-    "ask": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_ASK, "handler_fields": {},
-            "hook_action": ACTION_ASK, "delete_reaches_server": False},
+    "deny": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_DENY, "handler_fields": {}, "allowed_tools": GUARD_ALL,
+             "hook_action": ACTION_DENY, "delete_reaches_server": False, "denied_events": 0},
+    "ask": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_ASK, "handler_fields": {}, "allowed_tools": GUARD_ALL,
+            "hook_action": ACTION_ASK, "delete_reaches_server": False, "denied_events": 1},
+    # hooks.md:1933: "allow" skips the permission prompt; delete_all has no allow rule.
+    "allow": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_ALLOW, "handler_fields": {}, "allowed_tools": LIST_ONLY,
+              "hook_action": ACTION_ALLOW, "delete_reaches_server": True, "denied_events": 0},
     # hooks.md:365: a matcher with no `.*` "is compared as an exact string and matches no tool".
     "matcher_without_wildcard": {"matcher": "mcp__guard", "mode": HOOK_MODE_DENY, "handler_fields": {},
-                                 "hook_action": None, "delete_reaches_server": True},
+                                 "allowed_tools": GUARD_ALL, "hook_action": None, "delete_reaches_server": True,
+                                 "denied_events": 0},
     # hooks.md:786: exit 1 is a non-blocking error, "The action goes ahead".
     "exit1_default": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_FAIL, "handler_fields": {},
-                      "hook_action": ACTION_EXIT1, "delete_reaches_server": True},
+                      "allowed_tools": GUARD_ALL, "hook_action": ACTION_EXIT1, "delete_reaches_server": True,
+                      "denied_events": 0},
     # hooks.md:904, changelog.md:480 (v2.1.295+): `"onFailure": "block"` blocks the call.
     "exit1_on_failure_block": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_FAIL,
-                               "handler_fields": {"onFailure": "block"},
-                               "hook_action": ACTION_EXIT1, "delete_reaches_server": False},
+                               "handler_fields": {"onFailure": "block"}, "allowed_tools": GUARD_ALL,
+                               "hook_action": ACTION_EXIT1, "delete_reaches_server": False, "denied_events": 0},
 }
+# MCP server policy in inline `--settings` (settings-reference.md:4967: refused "wherever it's defined, including
+# ... servers passed with `--mcp-config`"; :4969 and managed-mcp.md:259: lists from every scope merge;
+# managed-mcp.md:251: `--strict-mcp-config` "doesn't bypass either list").
+POLICIES = {"denied": {"deniedMcpServers": [{"serverName": OPS}]},
+            "allowed_only": {"allowedMcpServers": [{"serverName": GUARD}]}}
 
-ALLOW_SCOPE_DEFECT = ("changelog.md:212 (fixed in 2.1.299): \"Changed MCP allow rules to reach only the server they "
+ALLOW_SCOPE_DEFECT = ("changelog.md:212 (changed in 2.1.299): \"Changed MCP allow rules to reach only the server they "
                       "name: `mcp__a` no longer allows a server named `a__b`\"")
 DENY_SCOPE_DEFECT = ("changelog.md:297 (fixed in 2.1.299): \"Fixed deny and ask rules for an MCP server "
                      "(`mcp__<server>`) not applying when the server's normalized name contains a double "
@@ -120,6 +139,10 @@ PROMPT_LIST_THEN_ROTATE = (
     "exactly \"{prefix}\". Step 2: after you have seen its result, call the tool {rotate} exactly once, with "
     "service set to exactly \"{service}\". Do not retry a failed or denied call and do not call any other tool. "
     "Then reply in one short sentence saying what each call returned."
+)
+PROMPT_LIST = (
+    "This is a test environment with fake data. Call the tool {list} exactly once, with prefix set to exactly "
+    "\"{prefix}\". Do not call any other tool. Then reply in one short sentence saying what the call returned."
 )
 PROMPT_ROTATE = (
     "This is a test environment with fake data. Call the tool {rotate} exactly once, with service set to exactly "
@@ -146,13 +169,13 @@ def servers_for(*, sandbox, names):
     return {name: fake_entry(sandbox=sandbox, server=name, toolset=toolsets[name]) for name in names}
 
 
-def run_flow(*, sandbox, ledger, request, names, allowed_tools, prompt, trigger_names, require_all_triggers,
-             extra_args):
+def run_flow(*, sandbox, ledger, request, names, gate_servers, allowed_tools, prompt, trigger_names,
+             require_all_triggers, extra_args):
     sandbox.set_env(name=TOOL_SEARCH_ENV, value=TOOL_SEARCH_OFF, secret=False)
     return run_until_triggered(
         sandbox=sandbox, ledger=ledger, test_id=request.node.nodeid, prompt=prompt, model=MODEL_ID,
         max_turns=MAX_TURNS, max_budget_usd=MAX_BUDGET_USD_PER_RUN, timeout_s=MODEL_CLI_TIMEOUT_S,
-        servers=servers_for(sandbox=sandbox, names=names), allowed_tools=allowed_tools, gate_servers=names,
+        servers=servers_for(sandbox=sandbox, names=names), allowed_tools=allowed_tools, gate_servers=gate_servers,
         wire_servers=names, trigger_names=trigger_names, require_all_triggers=require_all_triggers,
         retries=INCONCLUSIVE_RETRIES, rejected_exit_code=MODEL_REJECTED_EXIT_CODE, extra_args=extra_args,
         attempt_checks=[],
@@ -231,11 +254,12 @@ def run_hook_guard(*, sandbox, ledger, request, case_id, reason, deny_reason):
     delete_name = mcp_tool_name(server=GUARD, tool=DELETE)
     hook_log = os.path.join(sandbox.artifact_dir, HOOK_LOG_NAME)
     sandbox.record.observe(key="case", value=dict(case, case_id=case_id, deny_reason=deny_reason))
-    step(text="server guard; PreToolUse hook matcher %r, mode %s for %s (onFailure fields %s); prompt: %s, then %s"
-         % (case["matcher"], case["mode"], delete_name, case["handler_fields"], list_name, delete_name))
+    step(text="server guard; --allowedTools %r; PreToolUse hook matcher %r, mode %s for %s (onFailure fields %s); "
+              "prompt: %s, then %s" % (case["allowed_tools"], case["matcher"], case["mode"], delete_name,
+                                       case["handler_fields"], list_name, delete_name))
     triggered = run_flow(
-        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD],
-        allowed_tools=allowed_tools_for(servers=[GUARD]),
+        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD], gate_servers=[GUARD],
+        allowed_tools=case["allowed_tools"],
         prompt=PROMPT_LIST_THEN_DELETE.format(list=list_name, prefix=LIST_PREFIX, delete=delete_name, reason=reason),
         trigger_names=[list_name, delete_name], require_all_triggers=True,
         extra_args=guard_hook_settings_args(python=PYTHON, log_path=hook_log, matcher=case["matcher"],
@@ -268,13 +292,15 @@ def run_hook_guard(*, sandbox, ledger, request, case_id, reason, deny_reason):
     sandbox.record.observe(key="d_view", value=view)
     got(what="hook log (tool, action)", value=[(e["tool_name"], e["action"]) for e in view["hook_log"]])
     got(what="delete_all tools/call that reached guard", value=len(delete_calls))
-    # Recorded only (headless.md:333); the ask shape of these is not asserted.
-    got(what="result.permission_denials, `permission_denied` events", value=(
-        view["denials"]["permission_denials"], permission_denied_events(stream=stream)))
+    got(what="result.permission_denials", value=view["denials"]["permission_denials"])
     expect_equal(what="hook_event_name of every hook log line", expected=[PRE_TOOL_USE] * len(entries),
                  actual=[e["input"]["hook_event_name"] for e in entries])
-
     delete_uses = stream.tool_uses_named(name=delete_name)
+    expect_equal(what="`permission_denied` system events (tool_name, tool_use_id), %d per delete_all tool_use for "
+                      "case %s" % (case["denied_events"], case_id),
+                 expected=[(delete_name, use.id) for use in delete_uses for _ in range(case["denied_events"])],
+                 actual=[(e["tool_name"], e["tool_use_id"]) for e in permission_denied_events(stream=stream)])
+
     if case["hook_action"] is None:
         expect_equal(what="tools the hook ran for with matcher %r (hooks.md:365: it matches no tool)" % case["matcher"],
                      expected=[], actual=sorted({e["input"]["tool_name"] for e in entries}))
@@ -317,8 +343,7 @@ def run_deny_rule(*, sandbox, ledger, request, reason):
     step(text="server guard; --allowedTools %s, %s %s; prompt: %s, then %s" % (
         allowed_tools_for(servers=[GUARD]), DISALLOWED_TOOLS_FLAG, delete_name, list_name, delete_name))
     triggered = run_flow(
-        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD],
-        allowed_tools=allowed_tools_for(servers=[GUARD]),
+        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD], gate_servers=[GUARD], allowed_tools=GUARD_ALL,
         prompt=PROMPT_LIST_THEN_DELETE.format(list=list_name, prefix=LIST_PREFIX, delete=delete_name, reason=reason),
         trigger_names=[list_name], require_all_triggers=False,
         extra_args=[DISALLOWED_TOOLS_FLAG, delete_name],
@@ -370,7 +395,8 @@ def run_no_rule(*, sandbox, ledger, request, service):
     step(text="servers guard and guard__ops; --allowedTools %r only; prompt: %s, then %s" % (
         allow_rule, list_name, rotate_name))
     triggered = run_flow(
-        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD, OPS], allowed_tools=allow_rule,
+        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD, OPS], gate_servers=[GUARD, OPS],
+        allowed_tools=allow_rule,
         prompt=PROMPT_LIST_THEN_ROTATE.format(list=list_name, prefix=LIST_PREFIX, rotate=rotate_name,
                                               service=service),
         trigger_names=[list_name, rotate_name], require_all_triggers=True, extra_args=[],
@@ -428,7 +454,8 @@ def run_allow_scope(*, sandbox, ledger, request, service):
     step(text="servers guard and guard__ops; --allowedTools %r only; prompt: %s, then %s" % (
         allow_rule, list_name, rotate_name))
     triggered = run_flow(
-        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD, OPS], allowed_tools=allow_rule,
+        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD, OPS], gate_servers=[GUARD, OPS],
+        allowed_tools=allow_rule,
         prompt=PROMPT_LIST_THEN_ROTATE.format(list=list_name, prefix=LIST_PREFIX, rotate=rotate_name,
                                               service=service),
         trigger_names=[list_name, rotate_name], require_all_triggers=True, extra_args=[],
@@ -475,7 +502,8 @@ def test_server_deny_rule_stops_double_underscore_server(model_sandbox, cost_led
     step(text="servers guard and guard__ops; --allowedTools %r, %s %r; prompt: %s" % (
         allow_rule, DISALLOWED_TOOLS_FLAG, deny_rule, rotate_name))
     triggered = run_flow(
-        sandbox=model_sandbox, ledger=cost_ledger, request=request, names=[GUARD, OPS], allowed_tools=allow_rule,
+        sandbox=model_sandbox, ledger=cost_ledger, request=request, names=[GUARD, OPS], gate_servers=[GUARD, OPS],
+        allowed_tools=allow_rule,
         prompt=PROMPT_ROTATE.format(rotate=rotate_name, service=service),
         trigger_names=[rotate_name], require_all_triggers=False, extra_args=[DISALLOWED_TOOLS_FLAG, deny_rule],
     )
@@ -516,3 +544,44 @@ def test_server_deny_rule_stops_double_underscore_server(model_sandbox, cost_led
     model_sandbox.record.observe(key="d_view", value=view)
     expect_documented(what="tools/call that reached %s under --allowedTools %r --disallowedTools %r" % (
         OPS, allow_rule, deny_rule), doc="0 (%s)" % DENY_SCOPE_DEFECT, actual=len(ops_calls), holds=not ops_calls)
+
+
+# ---------------------------------------------------------------- MCP server policy (POLICIES)
+@pytest.mark.parametrize("policy_id", list(POLICIES))
+def test_mcp_server_policy_in_user_settings(model_sandbox, cost_ledger, request, policy_id):
+    """guard__ops matches no allow entry or a deny entry: it must never spawn; guard still serves list_items."""
+    run_server_policy(sandbox=model_sandbox, ledger=cost_ledger, request=request, policy_id=policy_id)
+
+
+def run_server_policy(*, sandbox, ledger, request, policy_id):
+    list_name = mcp_tool_name(server=GUARD, tool=LIST)
+    policy = json.dumps(POLICIES[policy_id], sort_keys=True, separators=(",", ":"))
+    ops_log = sandbox.wire_log_path(name=OPS)
+    open(ops_log, "a", encoding="utf-8").close()  # a fake that never starts writes no log: start it empty
+    step(text="servers guard and guard__ops; %s %s; prompt: %s" % (SETTINGS_FLAG, policy, list_name))
+    triggered = run_flow(
+        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD, OPS], gate_servers=[GUARD],
+        allowed_tools=allowed_tools_for(servers=[GUARD, OPS]),
+        prompt=PROMPT_LIST.format(list=list_name, prefix=LIST_PREFIX), trigger_names=[list_name],
+        require_all_triggers=False, extra_args=[SETTINGS_FLAG, policy],
+    )
+    if triggered.inconclusive is not None:
+        step(text="skip as inconclusive: %s" % triggered.inconclusive)
+        pytest.skip("%s (after %d attempt(s))" % (triggered.inconclusive, len(triggered.attempts)))
+    stream = triggered.run.stream
+    ops_events = [r["event"] for r in read_records(path=ops_log)]
+    view = {
+        "policy": POLICIES[policy_id],
+        "era_seen": assert_era(records=triggered.records[GUARD], negotiation=NEGOTIATION_LEGACY),
+        "guard__ops_in_init_mcp_servers": [e for e in stream.init["mcp_servers"] if e["name"] == OPS],
+        "guard__ops_wire_events": ops_events,
+        "result": result_summary(stream=stream),
+    }
+    sandbox.record.observe(key="d_view", value=view)
+    got(what="guard__ops in system/init mcp_servers ([] = absent)", value=view["guard__ops_in_init_mcp_servers"])
+    assert_tool_search_tool(stream=stream, expected=False)
+    assert_tools_advertised(stream=stream, names=[list_name])
+    expect_equal(what="records in wire-%s.jsonl, every attempt, under %s (settings-reference.md:4967: not loaded, "
+                      "so never spawned)" % (OPS, policy), expected=[], actual=ops_events)
+    view["list_passthrough"] = d_passthrough(stream=stream, records=triggered.records[GUARD], server=GUARD, tool=LIST)
+    sandbox.record.observe(key="d_view", value=view)

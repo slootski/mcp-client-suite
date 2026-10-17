@@ -60,10 +60,9 @@ test_permissions.run_allow_scope):
 
 Review round 2: finding 2's restart guard (NO_RESTART_MUTATIONS: the
 later call an error with no second process, or no second process alone,
-each FAILS check_d); every D23/T9 and T10 permission case (recordings of
-artifacts/20261017T123420Z-60563, the `ask` one synthesized from the deny
-recording) passes as recorded and FAILS under at least one mutation each
-(PERMISSION_MUTATIONS); fakes/guard_hook.py answers per mode.
+each FAILS check_d); every D23/T9, T10 and MCP server policy case
+(PERMISSION_RECORDINGS) passes as recorded and FAILS under at least one
+mutation each (PERMISSION_MUTATIONS); fakes/guard_hook.py answers per mode.
 """
 
 import functools
@@ -173,7 +172,8 @@ def replay(*, stream_text, records_by_server):
 class StubRunPrint:
     """Stands in for harness.model_run.run_print: appends the attempt's
     wire records to the sandbox's wire logs, writes its stream file, and
-    returns a ModelRun. Charges nothing."""
+    returns a ModelRun. Charges nothing. Its monotonic duration equals its
+    wall-clock window, so a replay never reads as a host clock jump."""
 
     def __init__(self, *, attempts):
         self._attempts = list(attempts)
@@ -191,7 +191,8 @@ class StubRunPrint:
         with open(stream_file, "w", encoding="utf-8") as handle:
             handle.write(replay_data["stream_text"])
         cli = CliResult(argv=["claude", "-p", "(stub)"], returncode=0, stdout=replay_data["stream_text"], stderr="",
-                        duration_s=0.0, start_epoch=replay_data["start_epoch"],
+                        duration_s=replay_data["end_epoch"] - replay_data["start_epoch"],
+                        start_epoch=replay_data["start_epoch"],
                         end_epoch=replay_data["end_epoch"])
         return ModelRun(label=label, cli=cli, stream=parse_stream(text=replay_data["stream_text"]),
                         debug_file=os.path.join(sandbox.artifact_dir, "debug-%s.log" % label),
@@ -742,10 +743,12 @@ def test_t10a_fixed_client_shape_xpasses(free_sandbox, request, monkeypatch):
     assert_strict_xfail(test=test_permissions.test_server_allow_rule_does_not_reach_double_underscore_server)
 
 
-# D23/T9 and D23/T10: every permission case --------------------------------
-# Recordings of run 20261017T123420Z-60563 (env fingerprints dropped). The
-# `ask` recording is synthesized from the deny one (T9_RECORDING): its hook
-# log actions are rewritten deny -> ask; the stream and wire are the deny run's.
+# D23/T9, D23/T10, MCP server policy: every permission case -----------------
+# Recordings of run 20261017T123420Z-60563, `ask` of run 20261017T141534Z-2243
+# (env fingerprints dropped). Not real runs of their case, built from another
+# case's recording until a paid run records them: `allow` = exit1_default (run
+# with --allowedTools "mcp__guard__*", not list_items only) with the hook's exit1
+# rewritten to allow; `policy_*` = deny_rule (no --settings policy), guard__ops log empty.
 OFFLINE_REASON = "cleanup-offline"
 OFFLINE_DENY_REASON = "denied-by-guard-hook-offline"  # T9 cases that do not assert the reason
 REASON_DROPPED_TEXT = "Permission for this tool use was denied (no hook reason, offline replay)"
@@ -763,9 +766,15 @@ PERMISSION_RECORDINGS = {
                       "rewrite_actions": {}},
     "exit1_on_failure_block": {"folder": "recorded-d23-t9-exit1-on-failure-block", "servers": [GUARD],
                                "hook_log": True, "rewrite_actions": {}},
-    "ask": {"folder": T9_RECORDING, "servers": [GUARD], "hook_log": True,
-            "rewrite_actions": {test_permissions.ACTION_DENY: test_permissions.ACTION_ASK}},
+    "ask": {"folder": "recorded-d23-t9-ask", "servers": [GUARD], "hook_log": True, "rewrite_actions": {}},
+    "allow": {"folder": "recorded-d23-t9-exit1-default", "servers": [GUARD], "hook_log": True,
+              "rewrite_actions": {test_permissions.ACTION_EXIT1: test_permissions.ACTION_ALLOW}},
+    "policy_denied": {"folder": "recorded-d23-t10-deny-rule", "servers": [GUARD], "hook_log": False,
+                      "rewrite_actions": {}},
+    "policy_allowed_only": {"folder": "recorded-d23-t10-deny-rule", "servers": [GUARD], "hook_log": False,
+                            "rewrite_actions": {}},
 }
+POLICY_IDS = {"policy_denied": "denied", "policy_allowed_only": "allowed_only"}  # row -> POLICIES key
 
 
 def permission_recording(*, case_id):
@@ -796,6 +805,9 @@ def permission_call(*, sandbox, request, case_id, text, hooks):
     if case_id == "no_rule":
         return functools.partial(test_permissions.run_no_rule, sandbox=sandbox, ledger=None, request=request,
                                  service=OFFLINE_SERVICE)
+    if case_id in POLICY_IDS:
+        return functools.partial(test_permissions.run_server_policy, sandbox=sandbox, ledger=None, request=request,
+                                 policy_id=POLICY_IDS[case_id])
     reason_asserted = test_permissions.T9_CASES[case_id]["hook_action"] in (test_permissions.ACTION_DENY,
                                                                           test_permissions.ACTION_ASK)
     return functools.partial(test_permissions.run_hook_guard, sandbox=sandbox, ledger=None, request=request,
@@ -850,6 +862,14 @@ def mutate_permission(*, mutation, text, records, hooks):
         _index, use = tool_use_of(events=events, name=delete_name)
         return rewrite_tool_result(text=text, tool_use_id=use["id"], epoch=None, content=REASON_DROPPED_TEXT,
                                    is_error=True), records, hooks
+    if mutation == "event_dropped":
+        events = [json.loads(line) for line in text.splitlines()]
+        return "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events if not (
+            e["type"] == "system" and "subtype" in e and e["subtype"] == test_permissions.PERMISSION_DENIED_SUBTYPE
+        )), records, hooks
+    if mutation == "ops_started":
+        started = [r for r in records[GUARD] if r["event"] == "started"][0]
+        return text, dict(records, **{OPS: [dict(started, source=OPS, pid=started["pid"] + 1)]}), hooks
     if mutation == "delete_all_call_dropped":
         return text, dict(records, **{GUARD: without_calls_named(records=records[GUARD],
                                                                  tool=test_permissions.DELETE)}), hooks
@@ -860,10 +880,7 @@ def mutate_permission(*, mutation, text, records, hooks):
 
 @pytest.mark.parametrize("case_id", sorted(PERMISSION_RECORDINGS))
 def test_permission_recorded_run_passes(free_sandbox, request, monkeypatch, case_id):
-    """Control: each recorded permission case passes its real test body. The
-    `ask` recording is synthesized from the deny one (hook log actions
-    rewritten deny -> ask), so it proves the asserts can fail, not what
-    2.1.296 does with "ask"."""
+    """Control: each recorded permission case passes its real test body."""
     text, records, hooks = permission_recording(case_id=case_id)
     stub_flow(monkeypatch=monkeypatch, attempts=[replay(stream_text=text, records_by_server=records)])
     step(text="replay %s as recorded (case %s)" % (PERMISSION_RECORDINGS[case_id]["folder"], case_id))
@@ -873,6 +890,7 @@ def test_permission_recorded_run_passes(free_sandbox, request, monkeypatch, case
                  actual=None if exc is None else repr(exc))
 
 
+OPS_RECORDS_CHECK = "records in wire-guard__ops.jsonl, every attempt"
 # id: (case, mutation, the start of the failing check's message)
 PERMISSION_MUTATIONS = {
     "deny_rule-init_lists_delete_all": ("deny_rule", "init_lists_delete_all",
@@ -890,14 +908,18 @@ PERMISSION_MUTATIONS = {
     "ask-guard_got_delete_all": ("ask", "guard_got_delete_all",
                                  "delete_all reached the server 1 time(s) although the hook"),
     "ask-reason_dropped": ("ask", "reason_dropped", "the hook's permissionDecisionReason in the denied tool_result"),
+    "ask-event_dropped": ("ask", "event_dropped", "`permission_denied` system events (tool_name, tool_use_id), 1 per"),
+    "allow-delete_all_call_dropped": ("allow", "delete_all_call_dropped",
+                                      "tools/call for 'delete_all' that reached server guard"),
+    "policy_denied-ops_started": ("policy_denied", "ops_started", OPS_RECORDS_CHECK),
+    "policy_allowed_only-ops_started": ("policy_allowed_only", "ops_started", OPS_RECORDS_CHECK),
 }
 
 
 @pytest.mark.parametrize("mutation_id", list(PERMISSION_MUTATIONS))
 def test_permission_mutation_fails(free_sandbox, request, monkeypatch, mutation_id):
     """Break: each mutation of a recorded permission case FAILS its real test
-    body with a plain AssertionError (not a skip, not the xfail exception).
-    `ask` cases start from the deny recording, rewritten deny -> ask."""
+    body with a plain AssertionError (not a skip, not the xfail exception)."""
     case_id, mutation, match = PERMISSION_MUTATIONS[mutation_id]
     text, records, hooks = permission_recording(case_id=case_id)
     text, records, hooks = mutate_permission(mutation=mutation, text=text, records=records, hooks=hooks)
@@ -912,12 +934,15 @@ HOOK_EXIT_OK = 0  # fakes/guard_hook.py: sys.exit(0) after pass, deny or ask
 HOOK_EXIT_FAIL = 1  # fakes/guard_hook.py FAIL_EXIT_CODE (mode fail)
 DECISION_DENY = "deny"  # hooks.md:1933: the permissionDecision values
 DECISION_ASK = "ask"
+DECISION_ALLOW = "allow"
 HOOK_TARGET = mcp_tool_name(server=GUARD, tool=test_permissions.DELETE)
 HOOK_OTHER = mcp_tool_name(server=GUARD, tool=test_permissions.LIST)
 # case id: (mode, tool name, exit code, permissionDecision on stdout or None for no stdout, logged action)
 GUARD_HOOK_CASES = {
     "deny": (test_permissions.HOOK_MODE_DENY, HOOK_TARGET, HOOK_EXIT_OK, DECISION_DENY, test_permissions.ACTION_DENY),
     "ask": (test_permissions.HOOK_MODE_ASK, HOOK_TARGET, HOOK_EXIT_OK, DECISION_ASK, test_permissions.ACTION_ASK),
+    "allow": (test_permissions.HOOK_MODE_ALLOW, HOOK_TARGET, HOOK_EXIT_OK, DECISION_ALLOW,
+              test_permissions.ACTION_ALLOW),
     "fail": (test_permissions.HOOK_MODE_FAIL, HOOK_TARGET, HOOK_EXIT_FAIL, None, test_permissions.ACTION_EXIT1),
     "ask_other_tool": (test_permissions.HOOK_MODE_ASK, HOOK_OTHER, HOOK_EXIT_OK, None, test_permissions.ACTION_PASS),
 }
