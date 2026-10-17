@@ -7,11 +7,8 @@ each, fresh sandbox), plus one run with it unset (doc 11 era check).
 
 Env (env-vars.md:337, 500; mcp.md:433-439): CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT
 = 3000 and MCP_TOOL_TIMEOUT = 60000 (the suite pin of 30000 is overridden;
-run.json records it), no per-server `timeout` in the --mcp-config entry. The
-variable name and its meaning were checked in env-vars.md:337 before
-building: "When a stdio ... MCP server sends no response and no progress
-notification for this long, the tool call aborts with an error instead of
-waiting for the overall MCP_TOOL_TIMEOUT"; stdio is covered since v2.1.203.
+run.json records it), no per-server `timeout` in the --mcp-config entry
+(env-vars.md:337 is quoted in IDLE_DOC).
 
 Server `slowpoke`: stdio fake, mode hang_on_tools_call, toolset smoke. It
 serves the handshake and tools/list; every tools/call is logged (`recv`)
@@ -28,19 +25,14 @@ The prompt asks for echo_canary once, no retry.
   D  T1, the bound: the client gives up at >= IDLE_LOWER_S - tolerance and
      < IDLE_HARD_UPPER_S (50 s, 10 s under the 60 s wall-clock limit, so
      the abort is the idle check's and the run does not hang) after the
-     fake logged the tools/call (the start is the
-     fake's own `recv` epoch, as asked; QA saw the fake's clock lag under
-     load). "Gives up" = the stream `timestamp` of that tool_use's
-     tool_result (one container clock). The tool_result is exactly one,
-     is_error true, and its text holds the client's idle-abort text
-     IDLE_ABORT_TEXT ("sent no response or progress", the number of seconds
-     left out), so the abort is the idle check's and not some other error.
-     Tolerance: IDLE_LOWER_TOLERANCE_S =
-     0.25 s on the lower bound only. The client's timer starts before the
-     fake reads the request, so the fake's start is late by its read lag
-     and the measured span can be a little under 3 s; the upper bound
-     needs no tolerance (lag only shortens the span), and 5 s is still far
-     below the 60 s wall-clock limit.
+     fake's own `recv` epoch of the tools/call. "Gives up" = the stream
+     `timestamp` of that tool_use's tool_result. Both are wall-clock times
+     of one container: an attempt whose host clock jumped is inconclusive
+     and retried (harness/model_flow.py; run 88362). The tool_result is
+     exactly one, is_error true, and holds IDLE_ABORT_TEXT, so the abort is
+     the idle check's and not some other error. IDLE_LOWER_TOLERANCE_S =
+     0.25 s, lower bound only: the client's timer starts before the fake
+     reads the request, so the span can be a little under 3 s.
   D  T3, part 1: no message for that request id reaches the fake after the
      cancel (or, with no cancel, after the give-up), other than that one
      cancel: no second tools/call, no second cancel.

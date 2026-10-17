@@ -11,10 +11,8 @@ from harness.redact import redact_argv
 
 LOG_ARG_MAX_CHARS = 120  # a long prompt is cut in the log line; commands.jsonl has it in full
 OUTPUT_PREVIEW_CHARS = 200  # first chars of stdout/stderr in the "waiting done" line (redacted first)
-# run_claude show_output_preview: a short `claude mcp ...` command shows the start
-# of its output in the "waiting done" line; a `claude -p` run shows byte
-# counts only (its stream is summarized by model_run.run_print and kept in
-# stream-<label>.jsonl and commands.jsonl).
+# run_claude show_output_preview: a `claude mcp ...` command shows the start of
+# its output in the "waiting done" line; a `claude -p` run shows byte counts only.
 OUTPUT_PREVIEW_SHOWN = True
 OUTPUT_PREVIEW_HIDDEN = False
 LINE_JOIN = " | "  # output lines joined on one log line
@@ -113,17 +111,17 @@ def run_claude(*, args, env, cwd, timeout_s, command_log, show_output_preview):
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired as exc:
-        duration = time.monotonic() - started
+        duration, wall = time.monotonic() - started, time.time() - start_epoch
         partial_out = _captured_text(data=exc.stdout)
         partial_err = _captured_text(data=exc.stderr)
         command_log.append(
             argv=argv,
-            fields={"timeout_s": timeout_s, "timed_out": True, "duration_s": round(duration, 3),
+            fields={"timeout_s": timeout_s, "timed_out": True, "mono_s": round(duration, 3), "wall_s": round(wall, 3),
                     "stdout": partial_out, "stderr": partial_err},
         )
-        wait_failed(started=started, response="timed out after %.3f s (limit %s s), partial %s" % (
-            duration, timeout_s, outputs_summary(stdout=partial_out, stderr=partial_err, command_log=command_log,
-                                          output_preview_shown=show_output_preview)))
+        wait_failed(started=started, response="timed out after %.3f s (wall %.3f s, limit %s s), partial %s" % (
+            duration, wall, timeout_s, outputs_summary(stdout=partial_out, stderr=partial_err, command_log=command_log,
+                                                       output_preview_shown=show_output_preview)))
         raise AssertionError("%s finished within the limit: Expected: exit within %s s. Actual: still running after "
                              "%.3f s." % (command, timeout_s, duration)) from exc
     duration = time.monotonic() - started

@@ -1,23 +1,19 @@
 """One model-driven check: run `claude -p` until the S trigger happened.
 
-run_until_triggered runs the prompt at most 1 + retries times (doc 22). An
-attempt is inconclusive when a server of the test is not `connected` in
-system/init (the gate) or the model made no tool_use with a trigger name
-(require_all_triggers: one for EACH name); only then is it retried, in a
-fresh CLAUDE_CONFIG_DIR. Each attempt is charged; it is recorded in run.json
-(`observations.model_runs`, with its retry reason) unless its stream shows
-the API rejected the key or the model: then the run stops at once
-(API_KEY_REJECTED_EXIT_CODE or rejected_exit_code), no retry.
+run_until_triggered runs the prompt at most 1 + retries times (doc 22), each
+retry in a fresh CLAUDE_CONFIG_DIR. An attempt is inconclusive, and only then
+retried, when the host clock jumped during it (clock_step_problem), a server
+of the test is not `connected` in system/init (the gate), or the model made no
+tool_use with a trigger name. Each attempt is charged and recorded in run.json
+(`observations.model_runs`), unless its stream shows the API rejected the key,
+the account or the model: then the run stops at once, no retry.
 
-D checks run on every attempt, after it is recorded and before the retry
-decision, so a retry never hides them; a D failure is never retried
-(docs/flake-policy.md):
-  1. (QA step 4) every tools/call that reached a fake belongs to a tool_use
-     of the attempt (model_checks.assert_every_call_has_a_tool_use).
-  2. (QA step 5) the run ends with a `result` event: a client that exits
-     after an error or a crash is a D failure, not an inconclusive attempt.
-  3. the test's own attempt_checks, each called as
-     check(stream=<Stream>, records=<{server: wire records}>); [] for none.
+D checks run on every attempt before the retry decision, so a retry never
+hides them, and are never retried (docs/flake-policy.md): every tools/call
+that reached a fake has a tool_use (QA step 4); the run ends with a `result`
+event (QA step 5); the test's own attempt_checks, each called as
+check(stream=<Stream>, records=<{server: wire records}>), unless the clock
+jumped (they may compare the stream's clock with a fake's).
 """
 
 import logging
@@ -26,7 +22,7 @@ from dataclasses import dataclass
 import pytest
 
 from harness.check import expect_true, got, step
-from harness.constants import API_KEY_ENV, API_KEY_REJECTED_EXIT_CODE
+from harness.constants import API_KEY_ENV, API_KEY_REJECTED_EXIT_CODE, CLOCK_STEP_TOLERANCE_S
 from harness.model_checks import (
     assert_every_call_has_a_tool_use,
     era_seen,
@@ -41,6 +37,7 @@ from harness.model_run import run_print
 from harness.wire import read_records, records_between
 
 logger = logging.getLogger(__name__)
+CLOCK_STEP_REASON = "inconclusive: the host clock jumped during the run (wall %.1f s, monotonic %.1f s)"
 
 
 @dataclass(frozen=True)
@@ -66,16 +63,23 @@ def trigger_problem(*, stream, trigger_names, require_all_triggers):
     return None
 
 
+def clock_step_problem(*, cli, tolerance_s):
+    """None, or the inconclusive reason when the run's wall-clock span passed
+    its monotonic span by more than tolerance_s (a host pause or clock step)."""
+    wall_s = cli.end_epoch - cli.start_epoch
+    if wall_s - cli.duration_s <= tolerance_s:
+        return None
+    return CLOCK_STEP_REASON % (wall_s, cli.duration_s)
+
+
 def run_until_triggered(*, sandbox, ledger, test_id, prompt, model, max_turns, max_budget_usd, timeout_s,
                         servers, allowed_tools, gate_servers, wire_servers, trigger_names, require_all_triggers,
                         retries, rejected_exit_code, extra_args, attempt_checks):
     """servers: {name: --mcp-config entry}; allowed_tools: the --allowedTools
-    value (model_run.allowed_tools_for gives the doc 11 default);
-    wire_servers: the fakes whose logs are read; trigger_names: tool_use
-    names that count as the trigger (see require_all_triggers);
-    extra_args: more `claude -p` arguments (e.g. ["--settings", <json>]),
-    [] for none; attempt_checks: D checks run on every attempt before the
-    retry decision (module docstring), [] for none.
+    value (model_run.allowed_tools_for gives the doc 11 default); wire_servers:
+    the fakes whose logs are read; trigger_names: see require_all_triggers;
+    extra_args: more `claude -p` arguments, [] for none; attempt_checks: the
+    test's D checks per attempt (module docstring), [] for none.
     Returns a Triggered; the caller skips when .inconclusive is set."""
     attempts = []
     total_charged = 0.0
@@ -100,8 +104,8 @@ def run_until_triggered(*, sandbox, ledger, test_id, prompt, model, max_turns, m
         key_problem = key_rejected(stream=stream)
         if key_problem is not None:
             got(what="%s: API key rejected" % run.label, value=key_problem)
-            pytest.exit("API key rejected: %s; no retry (check %s)" % (key_problem, API_KEY_ENV),
-                        returncode=API_KEY_REJECTED_EXIT_CODE)
+            pytest.exit("API key rejected: the API rejected the key or the account (HTTP 401 or 403): %s; no retry "
+                        "(check %s)" % (key_problem, API_KEY_ENV), returncode=API_KEY_REJECTED_EXIT_CODE)
         rejected = model_rejected(stream=stream, model=model)
         if rejected is not None:
             pytest.exit("model %s not accepted: %s" % (model, rejected), returncode=rejected_exit_code)
@@ -118,9 +122,12 @@ def run_until_triggered(*, sandbox, ledger, test_id, prompt, model, max_turns, m
         }
         got(what="%s: mcp_servers in system/init" % run.label,
             value=init_summary(stream=stream)["mcp_servers"] if stream.init is not None else None)
-        reason = gate_problem(stream=stream, servers=gate_servers)
-        logger.info("%s: gate (servers connected %s): %s", run.label, sorted(gate_servers),
-                    "ok" if reason is None else reason)
+        clock_jump = clock_step_problem(cli=run.cli, tolerance_s=CLOCK_STEP_TOLERANCE_S)
+        reason = clock_jump
+        if reason is None:
+            reason = gate_problem(stream=stream, servers=gate_servers)
+            logger.info("%s: gate (servers connected %s): %s", run.label, sorted(gate_servers),
+                        "ok" if reason is None else reason)
         if reason is None:
             reason = trigger_problem(stream=stream, trigger_names=trigger_names,
                                      require_all_triggers=require_all_triggers)
@@ -158,7 +165,7 @@ def run_until_triggered(*, sandbox, ledger, test_id, prompt, model, max_turns, m
                                                             len(stream.tool_uses), len(stream.tool_results))),
                     holds=stream.result is not None)
         logger.debug("%s: D held: every tools/call has a tool_use; result event present", run.label)
-        for check in attempt_checks:
+        for check in attempt_checks if clock_jump is None else []:
             check(stream=stream, records=records)
             logger.debug("%s: attempt check %s held", run.label, check.__name__)
         if reason is None:

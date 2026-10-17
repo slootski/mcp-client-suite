@@ -142,6 +142,9 @@ MODEL_CLI_TIMEOUT_S = 150
 MODEL_TEST_TIMEOUT_S = 360
 # Doc 22: a D check whose S trigger did not happen is retried once.
 INCONCLUSIVE_RETRIES = 1
+# Wall-clock span of an attempt over its monotonic span by more than this: the
+# attempt is inconclusive (harness/model_flow.py; run 88362: wall 252 s, mono 33 s).
+CLOCK_STEP_TOLERANCE_S = 5.0
 # Doc 22 test 1: repeated tests run REPEATS times (one pytest item each, a
 # fresh config dir each). D facts must hold in REPEATS of REPEATS; the S
 # pass rate fails the suite only below S_RATE_MIN_PASSES of REPEATS.
@@ -178,9 +181,9 @@ INCONCLUSIVE_EXIT_CODE = 13
 # model items selected, e.g. `-k <model test>`) stops before any test with
 # MODEL_TESTS_NEED_KEY_EXIT_CODE. Otherwise, with no key, model items are skipped.
 MODEL_TESTS_NEED_KEY_EXIT_CODE = 14
-# The Anthropic API rejected the key (HTTP 401 or 403): the run stops at the
-# first model run that shows it, with no retry (harness/model_flow.py,
-# model_checks.key_rejected). Not exit 13: the model is not to blame.
+# The Anthropic API rejected the key or the account (HTTP 401 or 403): the run
+# stops at the first model run that shows it, with no retry
+# (harness/model_flow.py, model_checks.key_rejected). Not exit 13: the model is not to blame.
 API_KEY_REJECTED_EXIT_CODE = 15
 API_KEY_REJECTED_STATUSES = (401, 403)
 API_RETRY_AUTH_FAILED = "authentication_failed"  # system/api_retry `error` category (headless.md:249)
