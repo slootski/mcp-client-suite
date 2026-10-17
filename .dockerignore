@@ -1,14 +1,19 @@
-artifacts/
-prompts/
-**/__pycache__/
-*.pyc
-.pytest_cache/
-.git/
-.gitignore
-.DS_Store
-# Secrets must never be baked into the image by `COPY . /suite` (Dockerfile).
+# Allow-list: `COPY . /suite` (Dockerfile) takes only what the suite runs.
+# Anything else at the root (a stray .npmrc, id_rsa, notes) stays out.
+*
+!harness
+!fakes
+!tests
+!pytest.ini
+# After the allow lines, so a secret or cache inside an allowed folder is
+# still excluded.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.DS_Store
 **/.env
 **/.env.*
 **/.envrc
+**/.npmrc
 **/*.key
-.idea/
+**/id_rsa*
