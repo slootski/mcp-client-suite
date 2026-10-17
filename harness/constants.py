@@ -142,7 +142,7 @@ MODEL_CLI_TIMEOUT_S = 150
 MODEL_TEST_TIMEOUT_S = 360
 # Doc 22: a D check whose S trigger did not happen is retried once.
 INCONCLUSIVE_RETRIES = 1
-# Wall-clock span of an attempt over its monotonic span by more than this: the
+# Wall-clock span of an attempt off its monotonic span by more than this: the
 # attempt is inconclusive (harness/model_flow.py; run 88362: wall 252 s, mono 33 s).
 CLOCK_STEP_TOLERANCE_S = 5.0
 # Doc 22 test 1: repeated tests run REPEATS times (one pytest item each, a

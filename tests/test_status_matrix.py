@@ -19,8 +19,9 @@ Cases:
   5.  HTTP, no header, 401 + OAuth metadata       -> ! Needs authentication             (D13/T3b)
   5b. HTTP, no header, bare 401, no metadata      -> status recorded, not asserted     (record-only)
       An out-of-spec server: it breaks the MUST to publish Protected
-      Resource Metadata (2025-11-25 basic__authorization.md:65). The wire log
-      shows requests for both metadata URIs (:104), then POST /register (:178, :211); mcp.md:764
+      Resource Metadata (2025-11-25 basic__authorization.md:65). The client asks
+      for both PRM URIs (:104), then AS/OIDC metadata and POST /register, which
+      2025-11-25 does not define without that metadata (:178, :211); mcp.md:764
       ("Needs authentication") assumes an OAuth server, so the status is
       compared with it record-only (run.json `documented_bare_401_status`),
       while the wire asserts (probe first, 401 on the MCP path) stay hard.

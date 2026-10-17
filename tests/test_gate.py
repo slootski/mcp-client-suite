@@ -28,6 +28,7 @@ import pytest
 
 import harness.claude_cli as claude_cli
 import harness.model_flow as model_flow
+import test_crash
 import test_idle_timeout
 from conftest import INCONCLUSIVE_MARK, SKIPPED_PREFIX, is_inconclusive
 from harness.check import expect_equal, expect_in, expect_true, got, step
@@ -51,12 +52,15 @@ from harness.redact import SecretRegistry
 from harness.wire import message_method
 from test_harness_offline import (
     ATTEMPT0_SHIFT_S,
+    CRASH_RECORDING,
     StubRunPrint,
+    crash_result_dropped,
     idle_call,
     idle_recording,
     recorded_attempt,
     recorded_stream_text,
     recorded_wire,
+    recording,
     replay,
     rewrite_tool_result,
     run_stubbed,
@@ -274,6 +278,7 @@ def test_key_accepted_recording_does_not_stop(free_sandbox, request, monkeypatch
 # after the call, so the hard window (< 50 s) failed and the run exited 1.
 PAUSED_CLOCKS = (252.7, 33.2)  # (wall span, monotonic span) of the attempt, in s
 PAUSED_GIVE_UP_S = 249.535
+STEP_BACK_S = 30.0  # a backward wall-clock step: the monotonic span is this much longer than the wall one
 IDLE_SERVER = test_idle_timeout.SERVER
 IDLE_TOOL = mcp_tool_name(server=IDLE_SERVER, tool=test_idle_timeout.TOOL)
 GATE_STATUS = "failed"
@@ -289,11 +294,11 @@ class ClockedStub(StubRunPrint):
 
     def __init__(self, *, attempts, clocks):
         super().__init__(attempts=attempts)
-        self._clocks = list(clocks)
+        self.clocks = list(clocks)
 
     def __call__(self, **kwargs):
         run = super().__call__(**kwargs)
-        wall_s, mono_s = self._clocks[len(self.labels) - 1]
+        wall_s, mono_s = self.clocks[len(self.labels) - 1]
         return dataclasses.replace(run, cli=dataclasses.replace(run.cli, end_epoch=run.cli.start_epoch + wall_s,
                                                                 duration_s=mono_s))
 
@@ -306,6 +311,11 @@ def honest_clocks(*, attempt):
 
 def paused_clocks(*, attempt):
     return PAUSED_CLOCKS
+
+
+def stepped_back_clocks(*, attempt):
+    span = attempt["end_epoch"] - attempt["start_epoch"]
+    return span, span + STEP_BACK_S
 
 
 def idle_attempts(*, text, records, clocks_of):
@@ -354,10 +364,12 @@ def test_host_clock_jump_is_inconclusive_and_retried(free_sandbox, request, monk
                  actual=(attempts[0]["inconclusive"], attempts[1]["inconclusive"]))
 
 
+# id: (the skip reason, given the last attempt's clocks; the clocks of each attempt)
 SKIP_CASES = {
-    "no_trigger": ("inconclusive: the model made no tool_use named %s" % IDLE_TOOL, honest_clocks),
-    "gate": ("inconclusive: %s=%s" % (IDLE_SERVER, GATE_STATUS), honest_clocks),
-    "clock_jump": (model_flow.CLOCK_STEP_REASON % PAUSED_CLOCKS, paused_clocks),
+    "no_trigger": (lambda clocks: "inconclusive: the model made no tool_use named %s" % IDLE_TOOL, honest_clocks),
+    "gate": (lambda clocks: "inconclusive: %s=%s" % (IDLE_SERVER, GATE_STATUS), honest_clocks),
+    "clock_jump": (lambda clocks: model_flow.CLOCK_STEP_REASON % clocks, paused_clocks),
+    "clock_step_back": (lambda clocks: model_flow.CLOCK_STEP_REASON % clocks, stepped_back_clocks),
 }
 
 
@@ -367,7 +379,7 @@ def test_two_inconclusive_attempts_skip_with_the_exit_13_mark(free_sandbox, requ
     clock): the real D19/T1 test body skips, and conftest counts the skip
     as inconclusive (INCONCLUSIVE_MARK), which is what makes a keyed run
     exit 13."""
-    reason, clocks_of = SKIP_CASES[case_id]
+    reason_of, clocks_of = SKIP_CASES[case_id]
     text, records, _call = idle_recording()
     if case_id == "no_trigger":
         text = rejected_stream(text=text, drop_tool_use=True, result_fields=RESULT_AS_RECORDED,
@@ -383,7 +395,8 @@ def test_two_inconclusive_attempts_skip_with_the_exit_13_mark(free_sandbox, requ
     message = str(caught.value)
     got(what="skip reason", value=message)
     expect_equal(what="attempts the harness started", expected=["attempt0", "attempt1"], actual=stub.labels)
-    expect_equal(what="the skip reason", expected="%s (after 2 attempt(s))" % reason, actual=message)
+    expect_equal(what="the skip reason", expected="%s (after 2 attempt(s))" % reason_of(clocks=stub.clocks[-1]),
+                 actual=message)
     expect_in(what="the skip reason (tests/conftest.py INCONCLUSIVE_MARK)", item=INCONCLUSIVE_MARK, container=message)
     expect_true(what="conftest.is_inconclusive of the item's outcome", expected="True",
                 actual=is_inconclusive(outcome="%s: %s" % (SKIPPED_PREFIX, message)),
@@ -412,3 +425,28 @@ def test_timed_out_command_records_both_clocks(tmp_path, monkeypatch):
                  actual=(record["timed_out"], record["wall_s"]))
     expect_true(what="mono_s of the timeout record", expected="in [%.1f, %.1f) s" % (TIMEOUT_S, CHILD_SLEEP_S),
                 actual=record["mono_s"], holds=TIMEOUT_S <= record["mono_s"] < CHILD_SLEEP_S)
+
+
+def test_clock_jump_does_not_hide_a_crash_d_failure(free_sandbox, request, monkeypatch):
+    """QA probe: attempt0 = the recorded D20/T1 run with no tool_result for
+    the crashed call (crash_result_dropped) and run 88362's clocks; attempt1
+    = the recorded run. The crashed-call D facts are checked on every
+    attempt, clock jump or not, so attempt0 fails with a plain AssertionError
+    and attempt1 never starts."""
+    text, records, hooks = recording(folder=CRASH_RECORDING, server=test_crash.SERVER)
+    dropped_text, dropped_records = crash_result_dropped(text=text, records=records)
+    attempt0 = replay(stream_text=dropped_text, records_by_server={
+        test_crash.SERVER: shifted(records=dropped_records, by_s=-ATTEMPT0_SHIFT_S)})
+    attempt1 = replay(stream_text=text, records_by_server={test_crash.SERVER: records})
+    stub = ClockedStub(attempts=[attempt0, attempt1], clocks=[PAUSED_CLOCKS, honest_clocks(attempt=attempt1)])
+    monkeypatch.setattr(model_flow, "run_print", stub)
+    with open(os.path.join(free_sandbox.artifact_dir, test_crash.HOOK_LOG_NAME), "w", encoding="utf-8") as handle:
+        handle.write(hooks)
+    step(text="replay: attempt0 = %s with no tool_result for the crashed call and run 88362's clocks (wall %.1f s, "
+              "monotonic %.1f s); attempt1 = the recorded run" % ((CRASH_RECORDING,) + PAUSED_CLOCKS))
+    with pytest.raises(AssertionError, match="tool_result blocks for the crashed tool_use") as caught:
+        test_crash.crash_run(sandbox=free_sandbox, ledger=None, request=request, run_index=0, signatures={})
+    expect_equal(what="the failure hid under the xfail (DocumentedBehaviorMismatch)", expected=False,
+                 actual=isinstance(caught.value, DocumentedBehaviorMismatch))
+    expect_equal(what="attempts the harness started (no retry after the D failure)", expected=["attempt0"],
+                 actual=stub.labels)

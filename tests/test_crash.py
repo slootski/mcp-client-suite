@@ -23,9 +23,9 @@ trigger (require_all_triggers). Hooks are logged as in D16.
   D  lazy restart: the first later call got one tool_result, is_error not
      true, from a fake process other than the crashed one.
   D  the run ends with a `result` event, the last line.
-  The crashed-call facts are also asserted on every attempt, before the
-  retry decision (crash_attempt_check): a client that dies after the crash
-  fails the item, it is never retried or skipped.
+  The crashed-call facts but the time bound (two clocks) are also asserted
+  on every attempt, before any retry (crash_attempt_check): a client that
+  dies after the crash fails the item, even on an attempt whose clock jumped.
   Documented, record-only: mcp.md:377 "Claude Code doesn't reconnect them
      automatically" (under "Automatic reconnection"; the 2026-07-28 spec
      says SHOULD restart, basic__transports__stdio.md:116). The lazy
@@ -176,8 +176,8 @@ def crashed_call_facts(*, stream, records):
 
 
 def assert_crashed_call(*, facts):
-    """D: the crashed tool_use got exactly one tool_result, after it, with
-    is_error true, at most CRASH_FAILURE_BOUND_S after the fake's exit."""
+    """D, on every attempt: the crashed tool_use got exactly one tool_result,
+    after it, with is_error true (the time bound is check_d's)."""
     crashed = facts["crashed"]
     results = facts["results"]
     expect_equal(what="tool_result blocks for the crashed tool_use %s" % crashed.id, expected=1, actual=len(results))
@@ -186,8 +186,6 @@ def assert_crashed_call(*, facts):
                 actual="%r (text %r)" % (result.is_error, result.text()), holds=result.is_error is True)
     expect_true(what="stream line of the crashed call's tool_result", expected="after its tool_use (line %d)"
                 % crashed.index, actual="line %d" % result.index, holds=result.index > crashed.index)
-    expect_true(what="time from the fake's exit to the error tool_result", expected="<= %s s" % CRASH_FAILURE_BOUND_S,
-                actual="%.3f s" % facts["failure_delay_s"], holds=facts["failure_delay_s"] <= CRASH_FAILURE_BOUND_S)
 
 
 def crash_attempt_check(*, stream, records):
@@ -270,6 +268,8 @@ def check_d(*, sandbox, triggered, hook_log):
         value=[(row["name"], row["tool_results"], row["reached_pids"]) for row in later_views])
 
     assert_crashed_call(facts=facts)
+    expect_true(what="time from the fake's exit to the error tool_result", expected="<= %s s" % CRASH_FAILURE_BOUND_S,
+                actual="%.3f s" % failure_delay_s, holds=failure_delay_s <= CRASH_FAILURE_BOUND_S)
     expect_true(what="later tool_use of %s (the trigger required one)" % SERVER, expected="at least 1",
                 actual=len(later), holds=bool(later))
     expect_equal(what="fake processes started between the crash and the next tool_use (pids)", expected=[],
