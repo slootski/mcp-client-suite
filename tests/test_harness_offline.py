@@ -744,11 +744,8 @@ def test_t10a_fixed_client_shape_xpasses(free_sandbox, request, monkeypatch):
 
 
 # D23/T9, D23/T10, MCP server policy: every permission case -----------------
-# Recordings of run 20261017T123420Z-60563, `ask` of run 20261017T141534Z-2243
-# (env fingerprints dropped). Not real runs of their case, built from another
-# case's recording until a paid run records them: `allow` = exit1_default (run
-# with --allowedTools "mcp__guard__*", not list_items only) with the hook's exit1
-# rewritten to allow; `policy_*` = deny_rule (no --settings policy), guard__ops log empty.
+# Recordings of run 20261017T123420Z-60563, `ask` of run 20261017T141534Z-2243,
+# `allow` and `policy_*` of run 20261017T161458Z-93821 (env fingerprints dropped).
 OFFLINE_REASON = "cleanup-offline"
 OFFLINE_DENY_REASON = "denied-by-guard-hook-offline"  # T9 cases that do not assert the reason
 REASON_DROPPED_TEXT = "Permission for this tool use was denied (no hook reason, offline replay)"
@@ -756,23 +753,17 @@ GUARD_HOOK_TIMEOUT_S = 10
 GUARD = test_permissions.GUARD
 OPS = test_permissions.OPS
 PERMISSION_RECORDINGS = {
-    "deny_rule": {"folder": "recorded-d23-t10-deny-rule", "servers": [GUARD], "hook_log": False,
-                  "rewrite_actions": {}},
-    "no_rule": {"folder": "recorded-d23-t10-no-rule", "servers": [GUARD, OPS], "hook_log": False,
-                "rewrite_actions": {}},
+    "deny_rule": {"folder": "recorded-d23-t10-deny-rule", "servers": [GUARD], "hook_log": False},
+    "no_rule": {"folder": "recorded-d23-t10-no-rule", "servers": [GUARD, OPS], "hook_log": False},
     "matcher_without_wildcard": {"folder": "recorded-d23-t9-matcher-without-wildcard", "servers": [GUARD],
-                                 "hook_log": False, "rewrite_actions": {}},
-    "exit1_default": {"folder": "recorded-d23-t9-exit1-default", "servers": [GUARD], "hook_log": True,
-                      "rewrite_actions": {}},
+                                 "hook_log": False},
+    "exit1_default": {"folder": "recorded-d23-t9-exit1-default", "servers": [GUARD], "hook_log": True},
     "exit1_on_failure_block": {"folder": "recorded-d23-t9-exit1-on-failure-block", "servers": [GUARD],
-                               "hook_log": True, "rewrite_actions": {}},
-    "ask": {"folder": "recorded-d23-t9-ask", "servers": [GUARD], "hook_log": True, "rewrite_actions": {}},
-    "allow": {"folder": "recorded-d23-t9-exit1-default", "servers": [GUARD], "hook_log": True,
-              "rewrite_actions": {test_permissions.ACTION_EXIT1: test_permissions.ACTION_ALLOW}},
-    "policy_denied": {"folder": "recorded-d23-t10-deny-rule", "servers": [GUARD], "hook_log": False,
-                      "rewrite_actions": {}},
-    "policy_allowed_only": {"folder": "recorded-d23-t10-deny-rule", "servers": [GUARD], "hook_log": False,
-                            "rewrite_actions": {}},
+                               "hook_log": True},
+    "ask": {"folder": "recorded-d23-t9-ask", "servers": [GUARD], "hook_log": True},
+    "allow": {"folder": "recorded-d23-t9-allow", "servers": [GUARD], "hook_log": True},
+    "policy_denied": {"folder": "recorded-d23-t13-policy-denied", "servers": [GUARD], "hook_log": False},
+    "policy_allowed_only": {"folder": "recorded-d23-t13-policy-allowed-only", "servers": [GUARD], "hook_log": False},
 }
 POLICY_IDS = {"policy_denied": "denied", "policy_allowed_only": "allowed_only"}  # row -> POLICIES key
 
@@ -785,11 +776,7 @@ def permission_recording(*, case_id):
     files = read_recording(folder=row["folder"], names=[STREAM_FILE] + list(wires.values()) + hook_names)
     hooks = None
     if row["hook_log"]:
-        entries = wire_records(text=files[test_permissions.HOOK_LOG_NAME])
-        for entry in entries:
-            if entry["action"] in row["rewrite_actions"]:
-                entry["action"] = row["rewrite_actions"][entry["action"]]
-        hooks = "".join(json.dumps(entry, sort_keys=True, ensure_ascii=False) + "\n" for entry in entries)
+        hooks = files[test_permissions.HOOK_LOG_NAME]
     return files[STREAM_FILE], {server: wire_records(text=files[wires[server]]) for server in wires}, hooks
 
 

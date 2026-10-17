@@ -96,13 +96,13 @@ xfail; read in the changelog, proven on 2.1.296; they should XPASS on
 
 Measured on an Apple silicon Mac with Docker Desktop, image layers cached.
 
-- **With the key** (run `20261017T141534Z-2243`): 132 items: 81 run
-  Claude Code, 51 self-test the harness. 125 passed, 7 xfailed
+- **With the key** (run `20261017T161458Z-93821`): 159 items: 84 run
+  Claude Code, 75 self-test the harness. 152 passed, 7 xfailed
   (findings 1, 3, 4, 5), 0 skipped, 0 failed, exit 0. pytest
-  took 5 min 26 s (the 4 idle-timeout items 33-35 s each). 40 `claude -p`
-  runs cost $0.086 (sum of `total_cost_usd`).
-- **Without a key** (run `20261017T134601Z-88212`): 86 passed, 1 xfailed
-  (finding 5), 45 model items skipped, exit 0; pytest took 56 s.
+  took 5 min 25 s (the 4 idle-timeout items 33-35 s each). 43 `claude -p`
+  runs cost $0.090 (sum of `total_cost_usd`).
+- **Without a key** (run `20261017T161832Z-1138`): 110 passed, 1 xfailed
+  (finding 5), 48 model items skipped, exit 0; pytest took 56 s.
 - **Budget.** Before each `claude -p` run: if the costs so far plus the
   per-run cap ($0.25) would pass `SUITE_BUDGET_USD` ($5.00), the run
   stops with exit 11.
@@ -186,7 +186,7 @@ and the log format: [docs/log-format.md](docs/log-format.md).
 | Need | State |
 |---|---|
 | A test view | **in the code**: `junit.xml` (strict xfails show as `skipped`); `outcomes.json` keeps them apart |
-| Two jobs: `free` (no key, about 1 min, 87 items) on every change; `model` nightly or on a PR label | **markers in the code** (`-m free`, `-m model`); the job definitions are not written |
+| Two jobs: `free` (no key, about 1 min, 111 items) on every change; `model` nightly or on a PR label | **markers in the code** (`-m free`, `-m model`); the job definitions are not written |
 | The key as a secret of the model job only; a missing one must not go green | **in the code**: with `SUITE_REQUIRE_KEY=1` a missing key exits 14; a rejected key exits 15 |
 | Budget guard | **in the code** (exit 11); CI would add a monthly cap |
 | Quarantine for flaky S items (test id, owner, end date) | **not in the code**: an S rate under 4/5 fails the run |

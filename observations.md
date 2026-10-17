@@ -652,3 +652,21 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   metadata) gets `! Needs authentication` and
   `test_http_no_header_needs_authentication` passes.
 
+## 2026-10-17, Claude Code 2.1.296: a hook `allow` and MCP server allow/deny lists in `--settings`
+
+- Run `artifacts/20261017T161458Z-93821` (all passed; recorded in
+  `tests/data/recorded-d23-t9-allow`, `recorded-d23-t13-policy-*`).
+- Hook `allow` (`test_pre_tool_use_hook_guards_mcp_tool[allow]`):
+  `--allowedTools "mcp__guard__list_items"` only, the hook answers
+  `permissionDecision: "allow"` for `delete_all`. The call reached the
+  server (one `tools/call`, arguments == `tool_use.input`), the hook logged
+  one `allow`, and no `permission_denied` event came. So a hook `allow`
+  stands in for a missing allow rule in `-p` (hooks.md:1933).
+- `deniedMcpServers: [{"serverName": "guard__ops"}]` and, separately,
+  `allowedMcpServers: [{"serverName": "guard"}]`, given in inline
+  `--settings` with both servers in `--mcp-config --strict-mcp-config`
+  (`test_mcp_server_policy_in_user_settings[denied]`, `[allowed_only]`):
+  `guard__ops` was never started (its wire log is empty) and is absent
+  from `system/init` `mcp_servers`; `guard` was `connected` and
+  `list_items` passed through. This matches settings-reference.md:4967-4969
+  and managed-mcp.md:251 (`--strict-mcp-config` does not bypass the lists).

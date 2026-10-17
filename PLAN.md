@@ -40,8 +40,8 @@ keys to prove the secret controls can fail.
 
 Totals: 76 test ideas in docs 12 to 23 (one of them, D13/T7, merged into
 D20/T3), plus 9 harness checks from doc 11. 28 ideas are implemented (4
-of them only in part: D12/T2, D13/T1, D19/T3, D23/T13); they run as 132
-pytest items: 81 run Claude Code, 51 self-test the harness. The first
+of them only in part: D12/T2, D13/T1, D19/T3, D23/T13); they run as 159
+pytest items: 84 run Claude Code, 75 self-test the harness. The first
 item to build next is the rest of D23/T13: `managed-mcp.json`.
 
 ## Columns
