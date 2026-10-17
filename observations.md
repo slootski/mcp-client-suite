@@ -567,6 +567,24 @@ run the named test with `./run.sh -k <test>` to get your own copy in
 - So a hook deny and `onFailure: "block"` (previous entry) show only in
   `permission_denials`, while a denied prompt shows in both.
 
+## 2026-10-17, Claude Code 2.1.296: a PreToolUse hook's `ask` in `-p` is denied, with its reason
+
+- Setup: `tests/test_permissions.py::test_pre_tool_use_hook_guards_mcp_tool[ask]`.
+  Server `guard`, `--allowedTools "mcp__guard__*"`, `--permission-prompts
+  none`; the guard hook answers `permissionDecision: "ask"` with a fresh
+  reason token for `delete_all` and passes `list_items`.
+- Observed (runs `artifacts/20261017T140840Z-88362` and
+  `artifacts/20261017T141534Z-2243`, passed in both): no `tools/call` for
+  `delete_all` reached the server; its one `tool_result` is `is_error:
+  true`, the same "no approval surface" text as a prompt with no allow
+  rule, ending "What required approval: <the hook's reason token>";
+  `result.permission_denials` lists it; and the stream has one
+  `permission_denied` system event for it (`decision_reason_type`
+  "asyncAgent"). This matches hooks.md:1934 and headless.md:333. Unlike a
+  hook `deny` (no event), a hook `ask` is a denied prompt, so it shows in
+  both places. The test asserts the denial and the reason; the event and
+  `permission_denials` are recorded only.
+
 ## 2026-10-17, step 6 model spend
 
 - Probe of every new model item (11 runs): $0.0260156

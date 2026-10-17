@@ -74,14 +74,14 @@ changelog, then proven on 2.1.296:
 
 Measured on an Apple silicon Mac with Docker Desktop, image layers cached.
 
-- **With the key** (run `20261017T120316Z-26391`): 98 items: 91 passed,
+- **With the key** (run `20261017T141534Z-2243`): 132 items: 125 passed,
   7 xfailed (findings 1, 3, 4, 5), 0 skipped, 0 failed, exit 0. pytest
-  took 5 min 15 s; the 4 idle-timeout items take 33-35 s each, since
-  2.1.296 aborts at 30 s. 39 `claude -p` runs cost $0.084 (sum of
-  `total_cost_usd`). Earlier full runs cost $0.071, $0.084 and $0.084, so
-  expect about $0.07-0.09.
-- **Without a key** (run `20261017T115200Z-25898`): 53 passed, 1 xfailed
-  (finding 5), 44 model items skipped, exit 0; pytest took 55 s.
+  took 5 min 26 s; the 4 idle-timeout items take 33-35 s each, since
+  2.1.296 aborts at 30 s. 40 `claude -p` runs cost $0.086 (sum of
+  `total_cost_usd`); earlier full runs cost $0.071-0.084. A Mac that
+  sleeps mid-run stalls the container and fails timing tests: keep it awake.
+- **Without a key** (run `20261017T134601Z-88212`): 86 passed, 1 xfailed
+  (finding 5), 45 model items skipped, exit 0; pytest took 56 s.
 - **Budget.** Before each `claude -p` run the suite checks that the sum
   of `total_cost_usd` plus the per-run cap ($0.25) stays under
   `SUITE_BUDGET_USD` ($5.00); if not, it stops with exit 11.
@@ -215,7 +215,7 @@ What it would take, and what is already in the code:
 | Need | State |
 |---|---|
 | A test view | **in the code**: `junit.xml` (JUnit shows the strict xfails as `skipped`); `outcomes.json` lists xfails apart from skips |
-| Two jobs from the markers: `free` (no key, no cost, about 1 min, 54 items) on every change; `model` nightly or on a PR label | **markers in the code** (`./run.sh -m free`, `./run.sh -m model`); the CI job definitions are not written |
+| Two jobs from the markers: `free` (no key, no cost, about 1 min, 87 items) on every change; `model` nightly or on a PR label | **markers in the code** (`./run.sh -m free`, `./run.sh -m model`); the CI job definitions are not written |
 | The key as a CI secret for the model job only; a missing secret must not go green | **in the code**: the model job sets `SUITE_REQUIRE_KEY=1`, so a missing secret exits 14; a wrong or expired key exits 15 |
 | Budget guard | **in the code**: `SUITE_BUDGET_USD` (exit 11), `--max-budget-usd` per run, `cost.json`. CI would add a monthly cap |
 | Quarantine list for flaky S items (test id, owner, end date) | **not in the code**. Today an S rate under 4/5 fails the run |

@@ -39,8 +39,8 @@ pytest inside pytest; 15 by a stub replay through the flow.
 
 Totals: 76 test ideas in docs 12 to 23 (one of them, D13/T7, merged into
 D20/T3), plus 9 harness checks from doc 11. 27 ideas are implemented (3
-of them only in part: D12/T2, D13/T1, D19/T3); they run as 98 pytest
-items (54 free, 44 model). The first item to build next is D23/T13
+of them only in part: D12/T2, D13/T1, D19/T3); they run as 132 pytest
+items (87 free, 45 model). The first item to build next is D23/T13
 (managed MCP allow and deny lists).
 
 ## Columns

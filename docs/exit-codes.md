@@ -19,7 +19,9 @@ full table. `./run.sh` exits with the suite's exit code.
 | 124, 137 | The whole-run cap (1800 s, coreutils `timeout`) stopped pytest; 137 if it had to be killed after the 30 s grace | entrypoint |
 | other | `docker build` or `docker create` failed; `run.sh` exits with Docker's code | `run.sh` (`set -e`) |
 
-Checked with no key on 2026-10-17: `./run.sh -m model` exits 14;
-`SUITE_REQUIRE_KEY=1 ./run.sh -m free` exits 14; `SUITE_REQUIRE_KEY=yes
-./run.sh` exits 4; `./run.sh -k no_such_test_zz` exits 5; plain `./run.sh`
-exits 0.
+Checked with no key on 2026-10-17: `./run.sh -m model` and `./run.sh -k
+test_round_trip_echo_canary` exit 14; `SUITE_REQUIRE_KEY=1 ./run.sh -m
+free` exits 14; `SUITE_REQUIRE_KEY=yes ./run.sh` exits 4; `./run.sh -k
+no_such_test_zz` exits 5; plain `./run.sh` exits 0. With a made-up key,
+`./run.sh -k test_round_trip_echo_canary` exits 15 after one `claude -p`
+run ($0; run `20261017T141626Z-9815`).
