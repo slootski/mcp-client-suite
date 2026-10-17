@@ -19,8 +19,9 @@ Cases:
   5.  HTTP, no header, 401 + OAuth metadata       -> ! Needs authentication             (D13/T3b)
   5b. HTTP, no header, bare 401, no metadata      -> status recorded, not asserted     (record-only)
       An out-of-spec server: it breaks the MUST to publish Protected
-      Resource Metadata (2025-11-25 basic__authorization.md:65). The client
-      follows the spec's MUST fallback and reports what it got; mcp.md:764
+      Resource Metadata (2025-11-25 basic__authorization.md:65). The client asks
+      for both PRM URIs (:104), then AS/OIDC metadata and POST /register, which
+      2025-11-25 does not define without that metadata (:178, :211); mcp.md:764
       ("Needs authentication") assumes an OAuth server, so the status is
       compared with it record-only (run.json `documented_bare_401_status`),
       while the wire asserts (probe first, 401 on the MCP path) stay hard.
@@ -410,10 +411,10 @@ def test_http_no_header_needs_authentication(free_sandbox):
 
 def test_http_bare_401_out_of_spec_server_status_recorded(free_sandbox):
     """The server breaks the spec MUST to publish Protected Resource
-    Metadata (2025-11-25 basic__authorization.md:65), so this is not a
-    client defect: the client follows the spec's MUST fallback (it tries
-    the discovery paths) and reports the failure it got (2.1.296: "✘
-    Failed to connect — Dynamic Client Registration rejected (HTTP 404)").
+    Metadata (2025-11-25 basic__authorization.md:65). The wire log shows
+    2.1.296 ask for both resource-metadata URIs (:104), then AS and OIDC
+    metadata and POST /register at the MCP origin, none defined without that
+    metadata (:178, :211), and report "✘ Failed to connect" (HTTP 404).
     The wire checks are plain asserts (the probe, and the 401 on the MCP
     path). The status is compared with mcp.md:764 record-only
     (record_documented, run.json `documented_bare_401_status`), and the

@@ -10,15 +10,29 @@ Exit 15 (harness/model_flow.py, model_checks.key_rejected): the recorded
 D15/T1 attempt (tests/test_harness_offline.py) is replayed through
 run_until_triggered with the API's rejection written into its stream. The
 run must stop with exit 15 after attempt0, with no retry.
+
+Clock step and skip reason: the recorded D19/T1 run, replayed through the
+real test body with run 88362's clocks, is inconclusive and retried, not
+failed; two inconclusive attempts skip with the mark exit 13 counts; a
+timed-out command records both clocks.
 """
 
+import dataclasses
 import json
 import os
+import sys
+import time
+import types
 
 import pytest
 
+import harness.claude_cli as claude_cli
 import harness.model_flow as model_flow
+import test_crash
+import test_idle_timeout
+from conftest import INCONCLUSIVE_MARK, SKIPPED_PREFIX, is_inconclusive
 from harness.check import expect_equal, expect_in, expect_true, got, step
+from harness.claude_cli import OUTPUT_PREVIEW_HIDDEN, CommandLog, run_claude
 from harness.constants import (
     API_KEY_ENV,
     API_KEY_REJECTED_EXIT_CODE,
@@ -31,16 +45,24 @@ from harness.constants import (
     RATES_FILE_ENV,
     REQUIRE_KEY_ENV,
 )
-from harness.model_checks import TOOLS_CALL, key_rejected
+from harness.known_defects import DocumentedBehaviorMismatch
+from harness.model_checks import TOOLS_CALL, key_rejected, mcp_tool_name
 from harness.model_run import parse_stream
+from harness.redact import SecretRegistry
 from harness.wire import message_method
 from test_harness_offline import (
     ATTEMPT0_SHIFT_S,
+    CRASH_RECORDING,
     StubRunPrint,
+    crash_result_dropped,
+    idle_call,
+    idle_recording,
     recorded_attempt,
     recorded_stream_text,
     recorded_wire,
+    recording,
     replay,
+    rewrite_tool_result,
     run_stubbed,
     shifted,
 )
@@ -248,3 +270,183 @@ def test_key_accepted_recording_does_not_stop(free_sandbox, request, monkeypatch
     triggered = run_stubbed(sandbox=free_sandbox, request=request, stub=stub)
     expect_equal(what="attempts the harness started", expected=["attempt0"], actual=stub.labels)
     expect_equal(what="inconclusive reason of the flow", expected=None, actual=triggered.inconclusive)
+
+
+# ---------------------------------------------------------------- clock step, skip reason (exit 13)
+# Run 88362 (artifacts/20261017T140840Z-88362, test_idle_timeout_aborts_hung_call[0]): the host paused; the
+# fake's log spans 252.7 s of wall clock and 33.2 s of monotonic clock, and the give-up came 249.535 s (wall)
+# after the call, so the hard window (< 50 s) failed and the run exited 1.
+PAUSED_CLOCKS = (252.7, 33.2)  # (wall span, monotonic span) of the attempt, in s
+PAUSED_GIVE_UP_S = 249.535
+STEP_BACK_S = 30.0  # a backward wall-clock step: the monotonic span is this much longer than the wall one
+IDLE_SERVER = test_idle_timeout.SERVER
+IDLE_TOOL = mcp_tool_name(server=IDLE_SERVER, tool=test_idle_timeout.TOOL)
+GATE_STATUS = "failed"
+TIMEOUT_S = 0.5  # run_claude's limit for a child that sleeps CHILD_SLEEP_S
+CHILD_SLEEP_S = 30
+WALL_START_EPOCH = 1792244840.0
+WALL_STEP_S = 200.0  # the wall clock moves this far during the timed-out command
+
+
+class ClockedStub(StubRunPrint):
+    """StubRunPrint whose attempt i reports clocks[i] = (wall span, monotonic
+    span) in its CliResult, as run_claude measures them."""
+
+    def __init__(self, *, attempts, clocks):
+        super().__init__(attempts=attempts)
+        self.clocks = list(clocks)
+
+    def __call__(self, **kwargs):
+        run = super().__call__(**kwargs)
+        wall_s, mono_s = self.clocks[len(self.labels) - 1]
+        return dataclasses.replace(run, cli=dataclasses.replace(run.cli, end_epoch=run.cli.start_epoch + wall_s,
+                                                                duration_s=mono_s))
+
+
+def honest_clocks(*, attempt):
+    """Wall span = monotonic span = the replay's window."""
+    span = attempt["end_epoch"] - attempt["start_epoch"]
+    return span, span
+
+
+def paused_clocks(*, attempt):
+    return PAUSED_CLOCKS
+
+
+def stepped_back_clocks(*, attempt):
+    span = attempt["end_epoch"] - attempt["start_epoch"]
+    return span, span + STEP_BACK_S
+
+
+def idle_attempts(*, text, records, clocks_of):
+    """ClockedStub with attempt0 (wire records moved ATTEMPT0_SHIFT_S earlier,
+    so the two windows do not overlap) and attempt1 of one D19/T1 replay;
+    clocks_of: honest_clocks or paused_clocks."""
+    early = shifted(records=records, by_s=-ATTEMPT0_SHIFT_S)
+    attempts = [replay(stream_text=text, records_by_server={IDLE_SERVER: wire}) for wire in (early, records)]
+    return ClockedStub(attempts=attempts, clocks=[clocks_of(attempt=attempt) for attempt in attempts])
+
+
+def with_server_status(*, text, server, status):
+    """The stream with `server`'s status in system/init set to `status`."""
+    events = [json.loads(line) for line in text.splitlines()]
+    for event in events:
+        if event["type"] == "system" and "subtype" in event and event["subtype"] == "init":
+            for entry in event["mcp_servers"]:
+                if entry["name"] == server:
+                    entry["status"] = status
+    return "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n"
+
+
+def test_host_clock_jump_is_inconclusive_and_retried(free_sandbox, request, monkeypatch):
+    """attempt0 = run 88362's shape: its clocks and its give-up 249.535 s
+    after the call (a hard-window failure when judged); attempt1 = the
+    recorded run on honest clocks. attempt0 must be inconclusive and
+    retried, and attempt1 end at the documented xfail as usual."""
+    text, records, call = idle_recording()
+    use_id = call["msg"]["params"]["_meta"]["claudecode/toolUseId"]
+    give_up = call["epoch"] - ATTEMPT0_SHIFT_S + PAUSED_GIVE_UP_S  # attempt0's wire records move ATTEMPT0_SHIFT_S
+    paused = replay(stream_text=rewrite_tool_result(text=text, tool_use_id=use_id, epoch=give_up, content=None,
+                                                    is_error=True),
+                    records_by_server={IDLE_SERVER: shifted(records=records, by_s=-ATTEMPT0_SHIFT_S)})
+    recorded = replay(stream_text=text, records_by_server={IDLE_SERVER: records})
+    stub = ClockedStub(attempts=[paused, recorded], clocks=[PAUSED_CLOCKS, honest_clocks(attempt=recorded)])
+    monkeypatch.setattr(model_flow, "run_print", stub)
+    step(text="replay: attempt0 = the recorded D19/T1 run with run 88362's clocks (wall %.1f s, monotonic %.1f s) "
+              "and give-up %.3f s after the call; attempt1 = the recorded run, honest clocks" % (
+                  PAUSED_CLOCKS + (PAUSED_GIVE_UP_S,)))
+    with pytest.raises(DocumentedBehaviorMismatch):
+        idle_call(sandbox=free_sandbox, request=request)()
+    expect_equal(what="attempts the harness started", expected=["attempt0", "attempt1"], actual=stub.labels)
+    attempts = free_sandbox.record.observation(key="model_runs")
+    expect_equal(what="inconclusive reasons of (attempt0, attempt1)",
+                 expected=(model_flow.CLOCK_STEP_REASON % PAUSED_CLOCKS, None),
+                 actual=(attempts[0]["inconclusive"], attempts[1]["inconclusive"]))
+
+
+# id: (the skip reason, given the last attempt's clocks; the clocks of each attempt)
+SKIP_CASES = {
+    "no_trigger": (lambda clocks: "inconclusive: the model made no tool_use named %s" % IDLE_TOOL, honest_clocks),
+    "gate": (lambda clocks: "inconclusive: %s=%s" % (IDLE_SERVER, GATE_STATUS), honest_clocks),
+    "clock_jump": (lambda clocks: model_flow.CLOCK_STEP_REASON % clocks, paused_clocks),
+    "clock_step_back": (lambda clocks: model_flow.CLOCK_STEP_REASON % clocks, stepped_back_clocks),
+}
+
+
+@pytest.mark.parametrize("case_id", list(SKIP_CASES))
+def test_two_inconclusive_attempts_skip_with_the_exit_13_mark(free_sandbox, request, monkeypatch, case_id):
+    """Both attempts inconclusive (no trigger tool_use, the gate, or the
+    clock): the real D19/T1 test body skips, and conftest counts the skip
+    as inconclusive (INCONCLUSIVE_MARK), which is what makes a keyed run
+    exit 13."""
+    reason_of, clocks_of = SKIP_CASES[case_id]
+    text, records, _call = idle_recording()
+    if case_id == "no_trigger":
+        text = rejected_stream(text=text, drop_tool_use=True, result_fields=RESULT_AS_RECORDED,
+                               retry_events=NO_RETRY_EVENTS)
+        records = handshake_only(records=records)
+    if case_id == "gate":
+        text = with_server_status(text=text, server=IDLE_SERVER, status=GATE_STATUS)
+    stub = idle_attempts(text=text, records=records, clocks_of=clocks_of)
+    monkeypatch.setattr(model_flow, "run_print", stub)
+    step(text="replay: the recorded D19/T1 run twice, %s" % case_id)
+    with pytest.raises(pytest.skip.Exception) as caught:
+        idle_call(sandbox=free_sandbox, request=request)()
+    message = str(caught.value)
+    got(what="skip reason", value=message)
+    expect_equal(what="attempts the harness started", expected=["attempt0", "attempt1"], actual=stub.labels)
+    expect_equal(what="the skip reason", expected="%s (after 2 attempt(s))" % reason_of(clocks=stub.clocks[-1]),
+                 actual=message)
+    expect_in(what="the skip reason (tests/conftest.py INCONCLUSIVE_MARK)", item=INCONCLUSIVE_MARK, container=message)
+    expect_true(what="conftest.is_inconclusive of the item's outcome", expected="True",
+                actual=is_inconclusive(outcome="%s: %s" % (SKIPPED_PREFIX, message)),
+                holds=is_inconclusive(outcome="%s: %s" % (SKIPPED_PREFIX, message)))
+
+
+def test_timed_out_command_records_both_clocks(tmp_path, monkeypatch):
+    """run_claude's timeout branch: commands.jsonl holds the monotonic and
+    the wall-clock time, so a host pause during a hung run can be told apart
+    from a client hang. The wall clock is stepped WALL_STEP_S on purpose."""
+    readings = iter([WALL_START_EPOCH, WALL_START_EPOCH + WALL_STEP_S])
+    stepped = types.SimpleNamespace(time=lambda: next(readings), monotonic=time.monotonic)
+    monkeypatch.setattr(claude_cli, "time", stepped)
+    monkeypatch.setattr(claude_cli, "CLAUDE_BIN", sys.executable)
+    path = str(tmp_path / "commands.jsonl")
+    step(text="run_claude: a child that sleeps %d s, limit %.1f s, wall clock stepped %.0f s" % (
+        CHILD_SLEEP_S, TIMEOUT_S, WALL_STEP_S))
+    with pytest.raises(AssertionError, match="finished within the limit"):
+        run_claude(args=["-c", "import time; time.sleep(%d)" % CHILD_SLEEP_S], env={}, cwd=str(tmp_path),
+                   timeout_s=TIMEOUT_S, command_log=CommandLog(path=path, registry=SecretRegistry()),
+                   show_output_preview=OUTPUT_PREVIEW_HIDDEN)
+    with open(path, encoding="utf-8") as handle:
+        record = json.loads(handle.readlines()[-1])
+    got(what="the timeout record's clocks", value={key: record[key] for key in record if key.endswith("_s")})
+    expect_equal(what="(timed_out, wall_s) of the timeout record", expected=(True, WALL_STEP_S),
+                 actual=(record["timed_out"], record["wall_s"]))
+    expect_true(what="mono_s of the timeout record", expected="in [%.1f, %.1f) s" % (TIMEOUT_S, CHILD_SLEEP_S),
+                actual=record["mono_s"], holds=TIMEOUT_S <= record["mono_s"] < CHILD_SLEEP_S)
+
+
+def test_clock_jump_does_not_hide_a_crash_d_failure(free_sandbox, request, monkeypatch):
+    """QA probe: attempt0 = the recorded D20/T1 run with no tool_result for
+    the crashed call (crash_result_dropped) and run 88362's clocks; attempt1
+    = the recorded run. The crashed-call D facts are checked on every
+    attempt, clock jump or not, so attempt0 fails with a plain AssertionError
+    and attempt1 never starts."""
+    text, records, hooks = recording(folder=CRASH_RECORDING, server=test_crash.SERVER)
+    dropped_text, dropped_records = crash_result_dropped(text=text, records=records)
+    attempt0 = replay(stream_text=dropped_text, records_by_server={
+        test_crash.SERVER: shifted(records=dropped_records, by_s=-ATTEMPT0_SHIFT_S)})
+    attempt1 = replay(stream_text=text, records_by_server={test_crash.SERVER: records})
+    stub = ClockedStub(attempts=[attempt0, attempt1], clocks=[PAUSED_CLOCKS, honest_clocks(attempt=attempt1)])
+    monkeypatch.setattr(model_flow, "run_print", stub)
+    with open(os.path.join(free_sandbox.artifact_dir, test_crash.HOOK_LOG_NAME), "w", encoding="utf-8") as handle:
+        handle.write(hooks)
+    step(text="replay: attempt0 = %s with no tool_result for the crashed call and run 88362's clocks (wall %.1f s, "
+              "monotonic %.1f s); attempt1 = the recorded run" % ((CRASH_RECORDING,) + PAUSED_CLOCKS))
+    with pytest.raises(AssertionError, match="tool_result blocks for the crashed tool_use") as caught:
+        test_crash.crash_run(sandbox=free_sandbox, ledger=None, request=request, run_index=0, signatures={})
+    expect_equal(what="the failure hid under the xfail (DocumentedBehaviorMismatch)", expected=False,
+                 actual=isinstance(caught.value, DocumentedBehaviorMismatch))
+    expect_equal(what="attempts the harness started (no retry after the D failure)", expected=["attempt0"],
+                 actual=stub.labels)

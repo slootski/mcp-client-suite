@@ -70,7 +70,7 @@ def model_rejected(*, stream, model):
 
 
 def key_rejected(*, stream):
-    """A reason when the API rejected the key, else None: result
+    """A reason when the API rejected the key or the account, else None: result
     `api_error_status` (observed on 2.1.296, null on success; not in
     headless.md) or api_retry `error_status` (headless.md:247) is 401/403,
     or api_retry `error` is authentication_failed (headless.md:249)."""
