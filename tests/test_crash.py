@@ -35,13 +35,20 @@ Hooks are logged as in D16.
   `exit`, no reply, exactly one tool_result, is_error true, the 5 s
   bound) are asserted (crash_attempt_check). A client that dies after the
   crash fails the item; it is never retried or skipped as inconclusive.
-  Documented, strict xfail: no restart at all, one spawn in the run
-     (mcp.md:377: "Stdio servers are local processes, and Claude Code
-     doesn't reconnect them automatically"). 2.1.296 starts the server
-     again on the next call to it (observations.md). The 2026-07-28 spec
-     says the client SHOULD restart it (basic__transports__stdio.md:116);
-     the run uses the legacy 2025-11-25 era, whose transports page has no
-     such line.
+  Documented, record-only (not a strict xfail, not a defect): mcp.md:377
+     says "Stdio servers are local processes, and Claude Code doesn't
+     reconnect them automatically". That line sits under "Automatic
+     reconnection", so it is about eager reconnects. 2.1.296 does not
+     reconnect eagerly (the D check above); it starts the server again
+     lazily, on the next call to it (observations.md). The 2026-07-28 spec
+     says the client SHOULD restart a crashed stdio server
+     (basic__transports__stdio.md:116; the run uses the legacy 2025-11-25
+     era, whose transports page has no such line). So the lazy restart is a
+     doc gap, recorded, not a defect: the spawn count is compared with the
+     doc line by record_documented, and run.json key
+     `observations.documented_no_restart` holds the doc line, the spawns
+     and whether they match. A strict xfail here would only pass if the
+     client got worse.
   Recorded: what the later call got (tool_result, the process that served
      it, whether tools/list was sent again), the hook inputs, the answer.
 """
@@ -58,6 +65,7 @@ from harness.constants import (
     CRASH_FAILURE_BOUND_S,
     CRASH_RUNS,
     FAKE_MODE_EXIT_ON_FIRST_TOOLS_CALL,
+    FAKE_PRESENCE_ONLY_MODEL,
     HOOK_POST_TOOL_USE,
     HOOK_POST_TOOL_USE_FAILURE,
     INCONCLUSIVE_RETRIES,
@@ -77,7 +85,7 @@ from harness.check import expect_equal, expect_true, got, record, step
 from harness.error_checks import event_epoch, spawns
 from harness.fakes_ctl import STDIO_FAKE_SCRIPT
 from harness.hooks import check_hook_log, hook_events, hook_settings_args, read_hook_log
-from harness.known_defects import DocumentedBehaviorMismatch, expect_documented
+from harness.known_defects import record_documented
 from harness.mcp_setup import PYTHON, stdio_fake_env
 from harness.model_checks import (
     MCP_PREFIX,
@@ -112,6 +120,7 @@ VOLATILE = re.compile(r"toolu_[A-Za-z0-9]+|%s[0-9a-f]+|%s[0-9a-f]+|%s[0-9a-f]+" 
     CANARY_PREFIX, REQUEST_ID_PREFIX, TEXT_PREFIX))
 NO_RESTART_DOC = ("mcp.md:377: \"Stdio servers are local processes, and Claude Code doesn't reconnect them "
                   "automatically\"")
+DOC_SPAWNS = 1  # what a literal reading of NO_RESTART_DOC gives: the one spawn, never a second
 PROMPT = (
     "Step 1: call the tool {crash} exactly once, with request_id set to exactly \"{request_id}\". Step 2: after "
     "you have seen its result, call the tool {next} exactly once, with text set to exactly \"{text}\", even if "
@@ -315,8 +324,9 @@ def signature(*, view):
 def crash_run(*, sandbox, ledger, request, run_index, signatures):
     """One D20/T1 run (the body of test_stdio_crash_mid_call; also driven
     offline by tests/test_harness_offline.py). signatures: {run index:
-    signature}, filled for the trailing same-every-run item. Raises
-    DocumentedBehaviorMismatch last, after every hard assert."""
+    signature}, filled for the trailing same-every-run item. Last, after
+    every hard assert, the documented one-spawn line is recorded (never
+    raised): run.json `observations.documented_no_restart`."""
     sandbox.set_env(name=TOOL_SEARCH_ENV, value=TOOL_SEARCH_OFF, secret=False)
     canary = CANARY_PREFIX + secrets.token_hex(CANARY_HEX_BYTES)
     request_id = REQUEST_ID_PREFIX + secrets.token_hex(HEX_BYTES)
@@ -326,7 +336,8 @@ def crash_run(*, sandbox, ledger, request, run_index, signatures):
         fake_script=STDIO_FAKE_SCRIPT, python=PYTHON,
         fake_env=stdio_fake_env(name=SERVER, mode=FAKE_MODE_EXIT_ON_FIRST_TOOLS_CALL,
                                 log_path=sandbox.wire_log_path(name=SERVER),
-                                init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=canary, toolset=TOOLSET_SMOKE),
+                                init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=canary, toolset=TOOLSET_SMOKE,
+                                presence_only_env=FAKE_PRESENCE_ONLY_MODEL),
     )
     crash_name = mcp_tool_name(server=SERVER, tool=CRASH_TOOL)
     next_name = mcp_tool_name(server=SERVER, tool=NEXT_TOOL)
@@ -353,16 +364,18 @@ def crash_run(*, sandbox, ledger, request, run_index, signatures):
     record(what="final answer", value=final_text)
     got(what="signature of run %d" % run_index, value=sig)
     signatures[run_index] = sig
-    # Last: the documented behavior (strict xfail while 2.1.296 restarts).
-    expect_documented(
+    # Last: the documented line, record-only (a doc gap, not a defect).
+    spawn_pids = [row["pid"] for row in view["spawns"]]
+    matches = record_documented(
         what="stdio fake processes started in the run",
-        doc="1: no restart (%s)" % NO_RESTART_DOC,
-        actual="%d (pids %s)" % (len(view["spawns"]), [row["pid"] for row in view["spawns"]]),
-        holds=len(view["spawns"]) == 1)
+        doc="%d: no restart (%s)" % (DOC_SPAWNS, NO_RESTART_DOC),
+        actual="%d (pids %s)" % (len(spawn_pids), spawn_pids),
+        holds=len(spawn_pids) == DOC_SPAWNS)
+    sandbox.record.observe(key="documented_no_restart", value={
+        "doc": NO_RESTART_DOC, "doc_spawns": DOC_SPAWNS, "spawns": len(spawn_pids), "pids": spawn_pids,
+        "matches": matches})
 
 
-@pytest.mark.xfail(strict=True, raises=DocumentedBehaviorMismatch, reason=NO_RESTART_DOC
-                   + "; 2.1.296 starts the stdio server again on the next call to it (observations.md)")
 @pytest.mark.parametrize("run_index", range(CRASH_RUNS))
 def test_stdio_crash_mid_call(model_sandbox, cost_ledger, request, run_index):
     if SIGNATURES_KEY not in request.config.stash:

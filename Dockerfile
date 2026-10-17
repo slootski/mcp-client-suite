@@ -21,12 +21,16 @@ ENV LANG=C.UTF-8 \
 # bubblewrap: on Linux, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 makes every claude
 # command exit 1 when no bwrap binary is found ("bubblewrap is required for
 # subprocess env scrubbing and isolation"), so the scrub test (D23/T11) needs
-# it installed. In this container 2.1.296 only checks that bwrap is present:
-# it never runs it (QA, step 2: a logging shim in its place was never
-# called, and an `exit 1` stub still gave a scrubbed env). So the scrub
-# needs no extra container privileges here, and the sandbox isolation the
-# error message mentions is not in effect (observations.md). Exact Debian
-# bookworm version, same on arm64 and amd64.
+# it installed. What was tested (evidence/2026-10-17-bwrap-probe.sh, output
+# in evidence/2026-10-17-bwrap-probe.txt): for `claude mcp add` / `claude
+# mcp list` and the stdio MCP spawns they make, with the `sandbox` setting
+# off (the default), 2.1.296 checks that bwrap exists but does not run it (a
+# logging shim in its place was never called, under the scrub or under
+# CLAUDE_CODE_MCP_ALLOWLIST_ENV=1, which does not need bwrap at all). So
+# those tests need no extra container privileges. Not tested: Bash tool
+# subprocesses (env-vars.md:567 scopes the PID-namespace isolation to
+# them) and runs with `sandbox` on. Exact Debian bookworm version, same on
+# arm64 and amd64.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
       bubblewrap=0.8.0-2+deb12u1 \

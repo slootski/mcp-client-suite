@@ -1,0 +1,42 @@
+# bwrap probe, 2026-10-17T11:31:59Z
+# image mcp-client-suite:local sha256:50b6f4767a11c4e9f3348bea5a3a403c57c0cf7f8e36fa8e30b70cfa522015f5
+claude --version: 2.1.296 (Claude Code)
+bwrap: /usr/bin/bwrap (bubblewrap 0.8.0)
+shim installed at /usr/bin/bwrap (real binary moved to /usr/bin/bwrap.real)
+shim self-test (`bwrap --version` as node): 1 call(s) logged: bwrap called (pid 19, uid 1000): [--version]
+
+== case control: extra env: (none); settings: none (sandbox off, the default)
+claude mcp add: exit 0; error line: (none)
+claude mcp list: exit 0; probe line: probe: python3 /suite/fakes/stdio_fake.py - ✔ Connected; error line: (none)
+bwrap shim called: 0 time(s)
+stdio fake spawns: 1
+  pid 48 env names: AI_AGENT CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION_ID CLAUDE_CONFIG_DIR CLAUDE_PROJECT_DIR COREPACK_ENABLE_AUTO_PIN DISABLE_AUTOUPDATER DISABLE_ERROR_REPORTING DISABLE_TELEMETRY FAKE_CANARY FAKE_INIT_REPLY_DELAY_MS FAKE_LOG FAKE_MODE FAKE_NAME FAKE_PRESENCE_ONLY_ENV FAKE_TOOLSET HOME LANG MCP_TIMEOUT MY_INHERITED_TOKEN MY_PLAIN_SETTING MY_SERVICE_TOKEN NPM_TOKEN NoDefaultCurrentDirectoryInExePath PATH
+
+== case scrub: extra env: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1; settings: none (sandbox off, the default)
+claude mcp add: exit 0; error line: (none)
+claude mcp list: exit 0; probe line: probe: python3 /suite/fakes/stdio_fake.py - ✔ Connected; error line: (none)
+bwrap shim called: 0 time(s)
+stdio fake spawns: 1
+  pid 85 env names: AI_AGENT CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION_ID CLAUDE_CODE_SUBPROCESS_ENV_SCRUB CLAUDE_PROJECT_DIR COREPACK_ENABLE_AUTO_PIN DISABLE_AUTOUPDATER DISABLE_ERROR_REPORTING DISABLE_TELEMETRY FAKE_CANARY FAKE_INIT_REPLY_DELAY_MS FAKE_LOG FAKE_MODE FAKE_NAME FAKE_PRESENCE_ONLY_ENV FAKE_TOOLSET HOME LANG MCP_TIMEOUT MY_PLAIN_SETTING MY_SERVICE_TOKEN NoDefaultCurrentDirectoryInExePath PATH
+
+== case allowlist: extra env: CLAUDE_CODE_MCP_ALLOWLIST_ENV=1; settings: none (sandbox off, the default)
+claude mcp add: exit 0; error line: (none)
+claude mcp list: exit 0; probe line: probe: python3 /suite/fakes/stdio_fake.py - ✔ Connected; error line: (none)
+bwrap shim called: 0 time(s)
+stdio fake spawns: 1
+  pid 123 env names: CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_PROJECT_DIR FAKE_CANARY FAKE_INIT_REPLY_DELAY_MS FAKE_LOG FAKE_MODE FAKE_NAME FAKE_PRESENCE_ONLY_ENV FAKE_TOOLSET HOME LC_CTYPE MY_SERVICE_TOKEN PATH
+
+bwrap removed from the container (command -v bwrap: none)
+
+== case scrub-no-bwrap: extra env: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1; settings: none (sandbox off, the default)
+claude mcp add: exit 1; error line: error: bubblewrap is required for subprocess env scrubbing and isolation. Install with: sudo apt-get install -y bubblewrap, set sandbox.bwrapPath in managed settings, or set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0 to disable (loses subprocess isolation).
+claude mcp list: exit 1; probe line: (none); error line: error: bubblewrap is required for subprocess env scrubbing and isolation. Install with: sudo apt-get install -y bubblewrap, set sandbox.bwrapPath in managed settings, or set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0 to disable (loses subprocess isolation).
+bwrap shim called: 0 time(s)
+stdio fake spawns: 0 (no wire log)
+
+== case allowlist-no-bwrap: extra env: CLAUDE_CODE_MCP_ALLOWLIST_ENV=1; settings: none (sandbox off, the default)
+claude mcp add: exit 0; error line: (none)
+claude mcp list: exit 0; probe line: probe: python3 /suite/fakes/stdio_fake.py - ✔ Connected; error line: (none)
+bwrap shim called: 0 time(s)
+stdio fake spawns: 1
+  pid 193 env names: CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_PROJECT_DIR FAKE_CANARY FAKE_INIT_REPLY_DELAY_MS FAKE_LOG FAKE_MODE FAKE_NAME FAKE_PRESENCE_ONLY_ENV FAKE_TOOLSET HOME LC_CTYPE MY_SERVICE_TOKEN PATH

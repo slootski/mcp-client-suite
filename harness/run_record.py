@@ -39,6 +39,10 @@ class RunRecord:
         """Attach an observation (status line, first client message, ...)."""
         self._data["observations"][key] = value
 
+    def observation(self, *, key):
+        """An observation attached earlier (a KeyError if there is none)."""
+        return self._data["observations"][key]
+
     def write(self, *, path, outcome):
         self._data["outcome"] = outcome
         with open(path, "w", encoding="utf-8") as handle:

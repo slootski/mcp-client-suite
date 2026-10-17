@@ -41,6 +41,7 @@ import pytest
 from harness.constants import (
     CANARY_HEX_BYTES,
     CANARY_PREFIX,
+    FAKE_PRESENCE_ONLY_MODEL,
     INCONCLUSIVE_RETRIES,
     INIT_REPLY_IMMEDIATE_MS,
     NEGOTIATION_LEGACY,
@@ -106,6 +107,7 @@ def fake_entry(*, sandbox, name, canary):
         fake_env=stdio_fake_env(
             name=name, mode="normal", log_path=sandbox.wire_log_path(name=name),
             init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=canary, toolset=TOOLSET_SMOKE,
+            presence_only_env=FAKE_PRESENCE_ONLY_MODEL,
         ),
     )
 

@@ -11,6 +11,9 @@ stdio (env inheritance, env-vars.md:406 and the scrub table at 553-558):
   B1a  default: inherited credentials reach the stdio server
   B1b  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1: they are stripped, by name, with
        the table's exceptions kept
+  B1c  CLAUDE_CODE_MCP_ALLOWLIST_ENV=1 (env-vars.md:334): only a baseline
+       plus the server's configured env, nothing inherited (a plain,
+       non-credential variable included: that one tells it from the scrub)
   B3   `claude mcp add --env KEY=value`: the value reaches the server (mcp.md:138)
 remote (mcp.md:677-689, "Credential variables that read as empty"):
   B2   `${ANTHROPIC_API_KEY}` / `${NPM_TOKEN}` in headers.Authorization, and
@@ -24,9 +27,12 @@ from fakes.wirelog import fingerprint
 from harness.constants import (
     API_KEY_ENV,
     FAKE_MCP_PATH,
+    FAKE_PRESENCE_ONLY_NONE,
     FREE_TEST_CANARY,
     FREE_TEST_TOOLSET,
     INIT_REPLY_IMMEDIATE_MS,
+    MCP_ALLOWLIST_ENV,
+    MCP_ALLOWLIST_ON,
     STATUS_CONNECTED,
     STATUS_FAILED_TO_CONNECT,
     SUBPROCESS_ENV_SCRUB_ENV,
@@ -43,6 +49,12 @@ GITHUB_TOKEN_ENV = "GITHUB_TOKEN"  # env-vars.md:558: the scrub leaves it in pla
 OWN_INHERITED_ENV = "MY_INHERITED_TOKEN"  # credential-like name of our own, inherited
 OWN_SERVICE_ENV = "MY_SERVICE_TOKEN"  # name of our own, passed with --env / used in ${}
 CONFIG_DIR_NAME = "CLAUDE_CONFIG_DIR"  # env-vars.md:557: the scrub removes it
+# A plain, non-credential setting of our own, inherited. The scrub keeps it
+# (its name and value do not look like a credential, env-vars.md:561); the
+# allowlist must drop it (env-vars.md:334: "instead of inheriting your
+# shell environment"). Not a secret.
+OWN_PLAIN_ENV = "MY_PLAIN_SETTING"
+OWN_PLAIN_VALUE = "plain-setting-not-a-secret"
 SCRUB_ON = "1"
 QUERY_PARAM = "key"
 EMPTY = fingerprint(value="")
@@ -91,7 +103,8 @@ def set_dummy(*, sandbox, name):
 def add_inheritance_fake(*, sandbox, name, service_value):
     return add_stdio_fake(
         sandbox=sandbox, name=name, mode="normal", init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS,
-        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, extra_env={OWN_SERVICE_ENV: service_value},
+        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, presence_only_env=FAKE_PRESENCE_ONLY_NONE,
+        extra_env={OWN_SERVICE_ENV: service_value},
     )
 
 
@@ -116,7 +129,9 @@ def assert_absent(*, envs, name):
 
 def test_stdio_inherits_credentials_by_default(free_sandbox):
     """env-vars.md:545: the scrub is what removes credentials from stdio
-    servers; without it they inherit Claude Code's environment."""
+    servers; without it they inherit Claude Code's environment. The plain
+    MY_PLAIN_SETTING arrives too: the control for the allowlist test, which
+    asserts it absent."""
     inherited = {
         API_KEY_ENV: set_dummy(sandbox=free_sandbox, name=API_KEY_ENV),
         AUTH_TOKEN_ENV: set_dummy(sandbox=free_sandbox, name=AUTH_TOKEN_ENV),
@@ -124,6 +139,8 @@ def test_stdio_inherits_credentials_by_default(free_sandbox):
         GITHUB_TOKEN_ENV: set_dummy(sandbox=free_sandbox, name=GITHUB_TOKEN_ENV),
         OWN_INHERITED_ENV: set_dummy(sandbox=free_sandbox, name=OWN_INHERITED_ENV),
     }
+    # The plain setting the allowlist test asserts absent: here it must arrive.
+    free_sandbox.set_env(name=OWN_PLAIN_ENV, value=OWN_PLAIN_VALUE, secret=False)
     service = free_sandbox.new_dummy_secret()
     name = "fake_stdio_env_default"
     wire_log = add_inheritance_fake(sandbox=free_sandbox, name=name, service_value=service)
@@ -134,6 +151,7 @@ def test_stdio_inherits_credentials_by_default(free_sandbox):
     for env_name in sorted(inherited):
         assert_reaches(envs=envs, name=env_name, value=inherited[env_name])
     assert_reaches(envs=envs, name=OWN_SERVICE_ENV, value=service)
+    assert_reaches(envs=envs, name=OWN_PLAIN_ENV, value=OWN_PLAIN_VALUE)
     assert_reaches(envs=envs, name=CONFIG_DIR_NAME, value=free_sandbox.config_dir)
 
 
@@ -178,6 +196,54 @@ def test_stdio_env_scrub_strips_inherited_credentials(free_sandbox):
     }
     free_sandbox.record.observe(key="configured_env_under_scrub", value=under_scrub)
     got(what="--env %s under the scrub, per spawn (recorded, not asserted)" % OWN_SERVICE_ENV, value=under_scrub)
+
+
+# --------------------------------------------------------------------------
+# B1c: CLAUDE_CODE_MCP_ALLOWLIST_ENV=1
+
+
+def test_stdio_allowlist_env_passes_only_baseline_and_configured_env(free_sandbox):
+    """CLAUDE_CODE_MCP_ALLOWLIST_ENV=1 (env-vars.md:334): "spawn stdio MCP
+    servers with only a safe baseline environment plus the server's
+    configured `env`, instead of inheriting your shell environment".
+
+    Asserted (the doc line): the server is spawned and connects; the
+    configured MY_SERVICE_TOKEN reaches it (fingerprint equal); none of the
+    inherited variables does: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
+    NPM_TOKEN, MY_INHERITED_TOKEN, and MY_PLAIN_SETTING (a plain value the
+    scrub would keep, so this tells the allowlist apart from the scrub).
+    Recorded, not asserted (the doc does not list the baseline): every env
+    name the server got (run.json `allowlist_env_names`), and whether
+    GITHUB_TOKEN and CLAUDE_CONFIG_DIR are among them."""
+    free_sandbox.set_env(name=MCP_ALLOWLIST_ENV, value=MCP_ALLOWLIST_ON, secret=False)
+    dropped = (API_KEY_ENV, AUTH_TOKEN_ENV, NPM_TOKEN_ENV, OWN_INHERITED_ENV)
+    for env_name in dropped:
+        set_dummy(sandbox=free_sandbox, name=env_name)
+    set_dummy(sandbox=free_sandbox, name=GITHUB_TOKEN_ENV)
+    free_sandbox.set_env(name=OWN_PLAIN_ENV, value=OWN_PLAIN_VALUE, secret=False)
+    service = free_sandbox.new_dummy_secret()
+    name = "fake_stdio_env_allowlist"
+    wire_log = add_inheritance_fake(sandbox=free_sandbox, name=name, service_value=service)
+    result = run_list_and_get(sandbox=free_sandbox, name=name, wire_log=wire_log)
+    envs = stdio_env_by_command(sandbox=free_sandbox, result=result)
+    names_seen = {command: [sorted(env) for env in envs[command]] for command in COMMANDS}
+    recorded = {
+        "env_names": names_seen,
+        "github_token_present": {command: [GITHUB_TOKEN_ENV in env for env in envs[command]] for command in COMMANDS},
+        "claude_config_dir_present": {command: [CONFIG_DIR_NAME in env for env in envs[command]]
+                                      for command in COMMANDS},
+    }
+    free_sandbox.record.observe(key="allowlist_env_names", value=recorded)
+    got(what="env names the stdio server got under %s=%s, per spawn (recorded)" % (
+        MCP_ALLOWLIST_ENV, MCP_ALLOWLIST_ON), value=names_seen)
+    got(what="%s / %s present under the allowlist, per spawn (recorded, not asserted)" % (
+        GITHUB_TOKEN_ENV, CONFIG_DIR_NAME), value={key: recorded[key] for key in (
+            "github_token_present", "claude_config_dir_present")})
+
+    expect_equal(what="`claude mcp list` status of %s" % name, expected=STATUS_CONNECTED, actual=result["status"])
+    assert_reaches(envs=envs, name=OWN_SERVICE_ENV, value=service)
+    for env_name in dropped + (OWN_PLAIN_ENV,):
+        assert_absent(envs=envs, name=env_name)
 
 
 # --------------------------------------------------------------------------

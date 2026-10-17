@@ -6,3 +6,9 @@ prompts/
 .git/
 .gitignore
 .DS_Store
+# Secrets must never be baked into the image by `COPY . /suite` (Dockerfile).
+**/.env
+**/.env.*
+**/.envrc
+**/*.key
+.idea/

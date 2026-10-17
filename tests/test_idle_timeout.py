@@ -73,6 +73,7 @@ from harness.constants import (
     CANARY_HEX_BYTES,
     CANARY_PREFIX,
     FAKE_MODE_HANG_ON_TOOLS_CALL,
+    FAKE_PRESENCE_ONLY_MODEL,
     IDLE_TIMEOUT_ENV,
     INCONCLUSIVE_RETRIES,
     INIT_REPLY_IMMEDIATE_MS,
@@ -208,7 +209,8 @@ def run_idle(*, sandbox, ledger, request, negotiation):
         fake_script=STDIO_FAKE_SCRIPT, python=PYTHON,
         fake_env=stdio_fake_env(name=SERVER, mode=FAKE_MODE_HANG_ON_TOOLS_CALL,
                                 log_path=sandbox.wire_log_path(name=SERVER),
-                                init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=canary, toolset=TOOLSET_SMOKE),
+                                init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=canary, toolset=TOOLSET_SMOKE,
+                                presence_only_env=FAKE_PRESENCE_ONLY_MODEL),
     )
     sandbox.record.observe(key="bounds", value={
         "idle_timeout_ms": IDLE_TIMEOUT_MS, "mcp_tool_timeout_ms": WALL_CLOCK_TIMEOUT_MS,

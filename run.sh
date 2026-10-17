@@ -3,9 +3,12 @@
 #
 #   ./run.sh                 # every test (model tests skip if no key)
 #   ./run.sh -m free         # extra arguments go to pytest
+#   SUITE_REQUIRE_KEY=1 ./run.sh   # fail (exit 14) instead of skipping model tests when no key is set
 #
 # Needs only Docker. ANTHROPIC_API_KEY is read from this shell when set; it
-# may be unset, and the free tests still run.
+# may be unset, and the free tests still run. SUITE_REQUIRE_KEY (not a
+# secret) is forwarded into the container with -e when it is set here
+# (tests/conftest.py: unset or "" = off, "1" = on).
 #
 # The key never goes into the container config: no `docker run -e`, no
 # --env-file, so `docker inspect` cannot show it, also not for a container
@@ -40,8 +43,30 @@ if [ -L artifacts ]; then
   exit 2
 fi
 
-docker build -t "$IMAGE" .
-IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+# Cleanup before anything that needs it: the key file, the image-ID file,
+# the container. Installed before the build, so a failed build still
+# removes the image-ID dir.
+CID=""
+KEY_DIR=""
+IID_DIR=""
+cleanup() {
+  if [ -n "$KEY_DIR" ]; then rm -rf "$KEY_DIR"; fi
+  if [ -n "$IID_DIR" ]; then rm -rf "$IID_DIR"; fi
+  if [ -n "$CID" ]; then docker rm -f "$CID" >/dev/null 2>&1 || true; fi
+}
+trap cleanup EXIT
+
+# The container is created from the image ID this build wrote (--iidfile),
+# not from the tag: a parallel build in another checkout can move the
+# shared tag between this build and `docker create`, and run.json would
+# then record an image that did not run.
+IID_DIR="$(umask 077 && mktemp -d)"
+docker build --iidfile "$IID_DIR/iid" -t "$IMAGE" .
+IMAGE_ID="$(cat "$IID_DIR/iid")"
+if [ -z "$IMAGE_ID" ]; then
+  echo "run.sh: docker build wrote no image ID" >&2
+  exit 1
+fi
 
 # Run as the host user (any uid works: the suite writes only under /tmp).
 # A root host keeps the image's non-root user, uid 1000.
@@ -51,9 +76,15 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 KEY_ARGS=()
-KEY_DIR=""
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   KEY_ARGS=(-e SUITE_API_KEY_FILE="$KEY_IN_CONTAINER")
+fi
+
+# SUITE_REQUIRE_KEY: forwarded when set at all (also when empty, which the
+# suite reads as off); a value other than "" or "1" stops pytest (exit 4).
+REQUIRE_ARGS=()
+if [ -n "${SUITE_REQUIRE_KEY+x}" ]; then
+  REQUIRE_ARGS=(-e SUITE_REQUIRE_KEY="$SUITE_REQUIRE_KEY")
 fi
 
 # Log times (harness/log_format.py) in the host's time zone: the zone name
@@ -61,19 +92,13 @@ fi
 HOST_TZ="$(readlink /etc/localtime 2>/dev/null | sed -n 's#.*/zoneinfo/##p')"
 if [ -z "$HOST_TZ" ]; then HOST_TZ="UTC"; fi
 
-CID=""
-cleanup() {
-  if [ -n "$KEY_DIR" ]; then rm -rf "$KEY_DIR"; fi
-  if [ -n "$CID" ]; then docker rm -f "$CID" >/dev/null 2>&1 || true; fi
-}
-trap cleanup EXIT
-
 CID="$(docker create \
   ${USER_ARGS[@]+"${USER_ARGS[@]}"} \
   ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} \
+  ${REQUIRE_ARGS[@]+"${REQUIRE_ARGS[@]}"} \
   -e SUITE_IMAGE_ID="$IMAGE_ID" \
   -e TZ="$HOST_TZ" \
-  "$IMAGE" "$@")"
+  "$IMAGE_ID" "$@")"
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   # Private dir + 0600 file, owned by the uid the container runs as, so

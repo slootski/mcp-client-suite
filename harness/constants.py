@@ -28,6 +28,11 @@ MCP_TIMEOUT_MS = "15000"  # server startup timeout, set explicitly (doc 11)
 NEGOTIATION_ENV = "MCP_PROTOCOL_NEGOTIATION"
 NEGOTIATION_LEGACY = "legacy"
 SUBPROCESS_ENV_SCRUB_ENV = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+# env-vars.md:334: "Set to `1` to spawn stdio MCP servers with only a safe
+# baseline environment plus the server's configured `env`, instead of
+# inheriting your shell environment".
+MCP_ALLOWLIST_ENV = "CLAUDE_CODE_MCP_ALLOWLIST_ENV"
+MCP_ALLOWLIST_ON = "1"
 CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
 
 # Test credentials. Every generated value starts with one of these prefixes,
@@ -37,6 +42,18 @@ BEARER_TEST_PREFIX = "Bearer test-"
 DUMMY_SECRET_PREFIX = "test-dummy-"
 SECRET_SCAN_MARKERS = (BEARER_TEST_PREFIX, DUMMY_SECRET_PREFIX)
 TEST_SECRET_HEX_BYTES = 16
+
+# stdio fake FAKE_PRESENCE_ONLY_ENV (fakes/stdio_fake.py): env names the
+# fake logs as {"set": true} instead of a fingerprint. Model tests: the live
+# key, so not even its sha8 reaches an artifact. Free tests: none, so the
+# credential tests can compare the dummy ANTHROPIC_API_KEY by fingerprint.
+FAKE_PRESENCE_ONLY_MODEL = (API_KEY_ENV,)
+FAKE_PRESENCE_ONLY_NONE = ()
+
+# Config-dir files never copied into the artifacts, whatever they hold
+# (harness/redact.py copy_tree_redacted): `.credentials.json` is where
+# Claude Code keeps OAuth tokens. Listed in run.json as withheld.
+WITHHELD_CONFIG_FILE_NAMES = (".credentials.json",)
 
 # Pins for tests that make no model call (marker `free`). The API key is
 # left out on purpose: a free test must not depend on it.
@@ -148,9 +165,23 @@ HOOK_POST_TOOL_USE_FAILURE = "PostToolUseFailure"
 # unset (not repeated; docs/flake-policy.md).
 UNSET_ERA_RUNS = 1
 RATES_FILE_ENV = "SUITE_S_RATES_FILE"  # set by harness.entrypoint
-# Exit code when the key is set and every model test of the run was
-# inconclusive (docs/flake-policy.md): such a run proves nothing.
-ALL_INCONCLUSIVE_EXIT_CODE = 13
+# outcomes.json: per-item outcomes, xfails apart from skips (tests/conftest.py).
+OUTCOMES_FILE_ENV = "SUITE_OUTCOMES_FILE"  # set by harness.entrypoint
+# Run-level gate (tests/conftest.py, docs/flake-policy.md). With the key
+# set, a run in which ANY model item was skipped as inconclusive exits
+# INCONCLUSIVE_EXIT_CODE (when pytest itself returned 0): such an item
+# proved nothing. A `-k` that leaves an S rate item or the crash
+# same-every-run item without its runs therefore exits 13 too.
+INCONCLUSIVE_EXIT_CODE = 13
+# With no key, a run that asked for model items on purpose (REQUIRE_KEY_ENV
+# = REQUIRE_KEY_ON, or a `-m` expression that selects a model item) stops
+# before any test with MODEL_TESTS_NEED_KEY_EXIT_CODE, instead of skipping
+# them and exiting 0. Plain `./run.sh` with no key still skips them.
+MODEL_TESTS_NEED_KEY_EXIT_CODE = 14
+REQUIRE_KEY_ENV = "SUITE_REQUIRE_KEY"  # not a secret; run.sh forwards it
+REQUIRE_KEY_ON = "1"
+REQUIRE_KEY_OFF = ""  # the same as unset
+USAGE_ERROR_EXIT_CODE = 4  # pytest's own code for a usage error (pytest.ExitCode.USAGE_ERROR)
 
 # API key hand-off (run.sh -> container): run.sh `docker cp`s a 0600 file
 # holding the key to API_KEY_FILE_IN_CONTAINER before `docker start` and

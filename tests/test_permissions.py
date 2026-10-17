@@ -96,6 +96,7 @@ import pytest
 from harness.constants import (
     DISALLOWED_TOOLS_FLAG,
     FAKE_MODE_NORMAL,
+    FAKE_PRESENCE_ONLY_MODEL,
     INCONCLUSIVE_RETRIES,
     INIT_REPLY_IMMEDIATE_MS,
     MAX_BUDGET_USD_PER_RUN,
@@ -197,7 +198,8 @@ def fake_entry(*, sandbox, server, toolset):
     return stdio_server_entry(
         fake_script=STDIO_FAKE_SCRIPT, python=PYTHON,
         fake_env=stdio_fake_env(name=server, mode=FAKE_MODE_NORMAL, log_path=sandbox.wire_log_path(name=server),
-                                init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=UNUSED_CANARY, toolset=toolset),
+                                init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=UNUSED_CANARY, toolset=toolset,
+                                presence_only_env=FAKE_PRESENCE_ONLY_MODEL),
     )
 
 

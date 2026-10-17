@@ -57,6 +57,7 @@ import secrets
 import pytest
 
 from harness.constants import (
+    FAKE_PRESENCE_ONLY_MODEL,
     INCONCLUSIVE_RETRIES,
     INIT_REPLY_IMMEDIATE_MS,
     MAX_BUDGET_USD_PER_RUN,
@@ -153,6 +154,7 @@ def fake_entry(*, sandbox, name, toolset):
         fake_env=stdio_fake_env(
             name=name, mode="normal", log_path=sandbox.wire_log_path(name=name),
             init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=UNUSED_CANARY, toolset=toolset,
+            presence_only_env=FAKE_PRESENCE_ONLY_MODEL,
         ),
     )
 

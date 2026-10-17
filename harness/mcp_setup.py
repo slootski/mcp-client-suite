@@ -10,11 +10,14 @@ from harness.mcp_status import get_fields, list_line, list_status
 from harness.wire import read_records, records_between
 
 PYTHON = "python3"
+PRESENCE_ONLY_SEPARATOR = ","  # fakes/stdio_fake.py PRESENCE_ONLY_SEPARATOR
 COMMANDS = ("claude mcp list", "claude mcp get")
 
 
-def stdio_fake_env(*, name, mode, log_path, init_reply_delay_ms, canary, toolset):
-    """The FAKE_* variables the stdio fake requires (fakes/stdio_fake.py)."""
+def stdio_fake_env(*, name, mode, log_path, init_reply_delay_ms, canary, toolset, presence_only_env):
+    """The FAKE_* variables the stdio fake requires (fakes/stdio_fake.py).
+    presence_only_env: env names the fake logs as {"set": true}, never as a
+    fingerprint (constants FAKE_PRESENCE_ONLY_MODEL / FAKE_PRESENCE_ONLY_NONE)."""
     return {
         "FAKE_MODE": mode,
         "FAKE_LOG": log_path,
@@ -22,15 +25,16 @@ def stdio_fake_env(*, name, mode, log_path, init_reply_delay_ms, canary, toolset
         "FAKE_INIT_REPLY_DELAY_MS": str(init_reply_delay_ms),
         "FAKE_CANARY": canary,
         "FAKE_TOOLSET": toolset,
+        "FAKE_PRESENCE_ONLY_ENV": PRESENCE_ONLY_SEPARATOR.join(presence_only_env),
     }
 
 
-def stdio_add_args(*, name, mode, log_path, init_reply_delay_ms, canary, toolset, extra_env):
+def stdio_add_args(*, name, mode, log_path, init_reply_delay_ms, canary, toolset, presence_only_env, extra_env):
     """Arguments of `claude mcp add <name> --env ... -- python3 stdio_fake.py`.
     extra_env: more NAME -> value pairs passed with --env (may be empty)."""
     fake_env = stdio_fake_env(
         name=name, mode=mode, log_path=log_path, init_reply_delay_ms=init_reply_delay_ms, canary=canary,
-        toolset=toolset,
+        toolset=toolset, presence_only_env=presence_only_env,
     )
     env_pairs = list(fake_env.items()) + sorted(extra_env.items())
     args = ["mcp", "add", name]
@@ -39,7 +43,7 @@ def stdio_add_args(*, name, mode, log_path, init_reply_delay_ms, canary, toolset
     return args + ["--", PYTHON, STDIO_FAKE_SCRIPT]
 
 
-def add_stdio_fake(*, sandbox, name, mode, init_reply_delay_ms, canary, toolset, extra_env):
+def add_stdio_fake(*, sandbox, name, mode, init_reply_delay_ms, canary, toolset, presence_only_env, extra_env):
     """Add the stdio fake (see stdio_add_args). Returns its wire log path."""
     log_path = sandbox.wire_log_path(name=name)
     step(text="add stdio server %s: FAKE_MODE=%s, toolset %s, initialize reply delay %s ms, extra --env %s" % (
@@ -47,7 +51,7 @@ def add_stdio_fake(*, sandbox, name, mode, init_reply_delay_ms, canary, toolset,
     added = sandbox.claude(
         args=stdio_add_args(
             name=name, mode=mode, log_path=log_path, init_reply_delay_ms=init_reply_delay_ms, canary=canary,
-            toolset=toolset, extra_env=extra_env,
+            toolset=toolset, presence_only_env=presence_only_env, extra_env=extra_env,
         )
     )
     expect_true(what="exit code of `claude mcp add %s`" % name, expected="0",

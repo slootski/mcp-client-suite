@@ -6,7 +6,9 @@ client sent no matter what the fake answers.
 
 Secrets rule: env values and HTTP header values are never written. Only a
 short SHA-256 prefix and the length are logged, so a test can compare an
-expected value by hash without the value ever reaching disk.
+expected value by hash without the value ever reaching disk. A value that
+must not even leave a fingerprint (the live API key) is logged as
+presence() only: {"set": true}.
 """
 
 import hashlib
@@ -23,6 +25,12 @@ def fingerprint(*, value):
     """Return {sha8, len} for a string value. Never the value itself."""
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
     return {"sha8": digest[:HASH_PREFIX_CHARS], "len": len(value)}
+
+
+def presence():
+    """{"set": true}: the form of a value whose fingerprint must not be
+    written either (the live API key). Says only that the name was set."""
+    return {"set": True}
 
 
 def fingerprint_mapping(*, mapping):

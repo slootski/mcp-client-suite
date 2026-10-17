@@ -33,10 +33,11 @@ test_crash.crash_run for D20/T1) against recorded runs
 (tests/data/recorded-d16-t1, -d16-t2, -d20-t1, copied from
 artifacts/20261017T062932Z-22649, repeat / run 0; env fingerprints
 dropped). Each case must raise a plain AssertionError: not a skip, and not
-DocumentedBehaviorMismatch (that one would hide under the crash test's
-strict xfail). A second crash mutation keeps the result event but drops
-the crashed call's tool_result. Controls: the unmutated recordings pass
-every D check (the crash one reaches the documented xfail).
+DocumentedBehaviorMismatch (the exception a strict xfail accepts). A second
+crash mutation keeps the result event but drops the crashed call's
+tool_result. Controls: the unmutated recordings pass every D check; the
+crash one raises nothing at all (its documented one-spawn line is
+record-only) and records 2 spawns, DIFFERS from the doc line, in run.json.
 
 QA step 6 (low): the step 6 model tests (D19/T1, D23/T9, D23/T10 variant
 A) had no offline breaks. Recorded runs of
@@ -273,6 +274,7 @@ D16_TOKEN = re.compile(r"%s[0-9a-f]{%d}" % (test_tool_errors.TOKEN_PREFIX, 2 * t
 NO_RESULT_MESSAGE = "the stream has no result event"
 CRASH_RUN_INDEX = 0
 CRASH_TOOL_USE_ID = "toolu_01ASD9nz6Z8hdSiBCkzdpf6V"  # the crashed tool_use in CRASH_RECORDING's stream
+RECORDED_CRASH_SPAWNS = 2  # CRASH_RECORDING: the first process, then the lazy restart on the next call
 
 
 def recording(*, folder, server):
@@ -413,17 +415,22 @@ def test_crash_client_died_fails(free_sandbox, request, monkeypatch, mutation, m
     expect_equal(what="attempts the harness started (no retry)", expected=["attempt0"], actual=stub.labels)
 
 
-def test_crash_recorded_run_reaches_the_documented_xfail(free_sandbox, request, monkeypatch):
+def test_crash_recorded_run_passes_and_records_the_restart(free_sandbox, request, monkeypatch):
     """Control: the unmutated crash recording passes every hard assert and
-    ends at the documented one-spawn check (DocumentedBehaviorMismatch)."""
+    raises nothing (the documented one-spawn line is record-only). run.json
+    records the lazy restart: 2 spawns, the doc line DIFFERS."""
     text, records, hooks = recording(folder=CRASH_RECORDING, server=test_crash.SERVER)
     stub, call = crash_call(sandbox=free_sandbox, request=request, monkeypatch=monkeypatch,
                             attempts=[replay(stream_text=text, records_by_server={test_crash.SERVER: records})],
                             hooks=hooks)
     step(text="replay %s as recorded" % CRASH_RECORDING)
     exc = raised_by(call=call)
-    expect_true(what="exception the recorded crash run raised", expected="DocumentedBehaviorMismatch",
-                actual=repr(exc), holds=isinstance(exc, DocumentedBehaviorMismatch))
+    expect_equal(what="exception the recorded crash run raised", expected=None,
+                 actual=None if exc is None else repr(exc))
+    documented = free_sandbox.record.observation(key="documented_no_restart")
+    got(what="run.json documented_no_restart of the replay", value=documented)
+    expect_equal(what="(spawns, matches the doc line) recorded in run.json", expected=(RECORDED_CRASH_SPAWNS, False),
+                 actual=(documented["spawns"], documented["matches"]))
 
 
 # ---------------------------------------------------------------- QA step 6

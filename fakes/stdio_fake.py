@@ -16,8 +16,15 @@ environment, which `claude mcp add --env NAME=value` sets:
                             the tool_error / protocol_error toolsets put in
                             their error text
   FAKE_TOOLSET              which tools tools/list offers, one of TOOLSETS below
+  FAKE_PRESENCE_ONLY_ENV    comma-separated env var names (empty string = none)
+                            that the `started` record logs as {"set": true}
+                            instead of {sha8, len}: names whose value must not
+                            leave even a fingerprint. Model tests pass
+                            ANTHROPIC_API_KEY (the live key); free tests pass
+                            none, so their dummy credentials keep a
+                            fingerprint the test can compare.
 
-All six are required: the fake exits with an error if one is missing.
+All seven are required: the fake exits with an error if one is missing.
 
 Toolsets (tools/list):
   smoke             `echo` (returns arguments.text) and `echo_canary` (needs
@@ -61,7 +68,9 @@ written to stdout (so `sent.epoch` <= the moment the client can see it).
 
 The `started` record lists every env var as name -> {sha8, len} (never the
 value), and separately `credential_env`: the same fingerprints for the vars
-whose name looks like a credential (CREDENTIAL_NAME_MARKERS).
+whose name looks like a credential (CREDENTIAL_NAME_MARKERS). In both, a
+name listed in FAKE_PRESENCE_ONLY_ENV is logged as {"set": true} instead
+(it was in the env; nothing about its value is written).
 
 Modes:
   normal                   answer server/discover with -32601 (method not
@@ -104,12 +113,14 @@ import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from wirelog import WireLog, fingerprint, fingerprint_mapping  # noqa: E402
+from wirelog import WireLog, fingerprint, fingerprint_mapping, presence  # noqa: E402
 
 MODES = ("normal", "discover_internal_error", "discover_silent", "exit_at_start", "exit_on_first_tools_call",
          "hang_on_tools_call")
 EXIT_ON_FIRST_CALL_REASON = "exit_on_first_tools_call"
-REQUIRED_ENV = ("FAKE_MODE", "FAKE_LOG", "FAKE_NAME", "FAKE_INIT_REPLY_DELAY_MS", "FAKE_CANARY", "FAKE_TOOLSET")
+REQUIRED_ENV = ("FAKE_MODE", "FAKE_LOG", "FAKE_NAME", "FAKE_INIT_REPLY_DELAY_MS", "FAKE_CANARY", "FAKE_TOOLSET",
+                "FAKE_PRESENCE_ONLY_ENV")
+PRESENCE_ONLY_SEPARATOR = ","
 TOOLSETS = ("smoke", "calc", "calc_side_effect", "ticket", "tool_error", "protocol_error", "guard", "ops")
 SIDE_EFFECT_MARKER = "calc2-side-effect: add also wrote this record"
 TICKET_ID_PREFIX = "TCK-"
@@ -291,14 +302,31 @@ def read_config():
     if not delay_text.isdigit():
         sys.stderr.write("stdio_fake: FAKE_INIT_REPLY_DELAY_MS must be a non-negative integer, got %r\n" % delay_text)
         sys.exit(2)
+    presence_text = os.environ["FAKE_PRESENCE_ONLY_ENV"]
+    presence_only = tuple(presence_text.split(PRESENCE_ONLY_SEPARATOR)) if presence_text else ()
+    if any(not name for name in presence_only):
+        sys.stderr.write("stdio_fake: FAKE_PRESENCE_ONLY_ENV must be comma-separated names with no empty item, "
+                         "got %r\n" % presence_text)
+        sys.exit(2)
     return {
         "mode": mode,
+        "presence_only": presence_only,
         "log": os.environ["FAKE_LOG"],
         "name": os.environ["FAKE_NAME"],
         "init_reply_delay_s": int(delay_text) / 1000.0,
         "canary": os.environ["FAKE_CANARY"],
         "toolset": toolset,
     }
+
+
+def env_view(*, mapping, presence_only):
+    """name -> {sha8, len} for every var, except {"set": true} for the
+    names in presence_only (no fingerprint of their value is written)."""
+    view = fingerprint_mapping(mapping={name: mapping[name] for name in mapping if name not in presence_only})
+    for name in mapping:
+        if name in presence_only:
+            view[name] = presence()
+    return {name: view[name] for name in sorted(view)}
 
 
 def credential_like(*, name):
@@ -527,9 +555,10 @@ def main():
             "ppid": os.getppid(),
             "argv": sys.argv,
             "cwd": os.getcwd(),
-            "env": fingerprint_mapping(mapping=environment),
-            "credential_env": fingerprint_mapping(
-                mapping={name: environment[name] for name in environment if credential_like(name=name)}
+            "env": env_view(mapping=environment, presence_only=config["presence_only"]),
+            "credential_env": env_view(
+                mapping={name: environment[name] for name in environment if credential_like(name=name)},
+                presence_only=config["presence_only"],
             ),
         },
     )

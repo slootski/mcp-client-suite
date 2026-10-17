@@ -44,6 +44,7 @@ import secrets
 import pytest
 
 from harness.constants import (
+    FAKE_PRESENCE_ONLY_MODEL,
     HOOK_POST_TOOL_USE,
     HOOK_POST_TOOL_USE_FAILURE,
     INCONCLUSIVE_RETRIES,
@@ -126,6 +127,7 @@ def fake_entry(*, sandbox, server, toolset, token):
         fake_env=stdio_fake_env(
             name=server, mode=FAKE_MODE_NORMAL, log_path=sandbox.wire_log_path(name=server),
             init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=token, toolset=toolset,
+            presence_only_env=FAKE_PRESENCE_ONLY_MODEL,
         ),
     )
 

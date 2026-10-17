@@ -46,6 +46,7 @@ import os
 import pytest
 
 from harness.constants import (
+    FAKE_PRESENCE_ONLY_NONE,
     FIRST_MESSAGE_NEGOTIATION_UNSET,
     FREE_TEST_CANARY,
     FREE_TEST_TOOLSET,
@@ -223,7 +224,7 @@ def test_handshake_on_the_wire(free_sandbox, negotiation, repeat):
         free_sandbox.set_env(name=NEGOTIATION_ENV, value=NEGOTIATION_LEGACY, secret=False)
     wire_log = add_stdio_fake(
         sandbox=free_sandbox, name=name, mode="normal", init_reply_delay_ms=INIT_REPLY_HELD_MS,
-        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, extra_env={}
+        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, presence_only_env=FAKE_PRESENCE_ONLY_NONE, extra_env={}
     )
     result = run_list_and_get(sandbox=free_sandbox, name=name, wire_log=wire_log)
     assert_connected(result=result)
@@ -282,7 +283,8 @@ def test_discover_generic_error_falls_back_to_initialize(free_sandbox, repeat):
     wire_log = add_stdio_fake(
         sandbox=free_sandbox, name=name, mode="discover_internal_error",
         init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS,
-        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, extra_env={},
+        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, presence_only_env=FAKE_PRESENCE_ONLY_NONE,
+        extra_env={},
     )
     result = run_list_and_get(sandbox=free_sandbox, name=name, wire_log=wire_log)
     assert_connected(result=result)
@@ -325,7 +327,8 @@ def test_discover_silent_falls_back_and_is_remembered_per_config_dir(free_sandbo
     wire_log = add_stdio_fake(
         sandbox=free_sandbox, name=name, mode="discover_silent",
         init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS,
-        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, extra_env={},
+        canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, presence_only_env=FAKE_PRESENCE_ONLY_NONE,
+        extra_env={},
     )
     result = run_list_and_get(sandbox=free_sandbox, name=name, wire_log=wire_log)
     assert_connected(result=result)
@@ -384,7 +387,8 @@ def test_discover_silent_falls_back_and_is_remembered_per_config_dir(free_sandbo
     added = free_sandbox.claude_with_env(
         args=stdio_add_args(
             name=name, mode="discover_silent", log_path=wire_log,
-            init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET, extra_env={},
+            init_reply_delay_ms=INIT_REPLY_IMMEDIATE_MS, canary=FREE_TEST_CANARY, toolset=FREE_TEST_TOOLSET,
+            presence_only_env=FAKE_PRESENCE_ONLY_NONE, extra_env={},
         ),
         env=fresh_env,
     )

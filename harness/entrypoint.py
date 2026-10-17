@@ -13,9 +13,11 @@
    with exit 2: a silent "no key" would skip every model test and pass.
 1. pytest runs under coreutils `timeout` (hard whole-run cap) and writes
    every artifact (per-test folders, junit.xml, cost.json from the suite
-   cost ledger, path in SUITE_COST_FILE, and s-rates.json with the S pass
-   rates of repeated tests, path in SUITE_S_RATES_FILE) to the staging folder,
-   inside the container and not mounted.
+   cost ledger, path in SUITE_COST_FILE, s-rates.json with the S pass
+   rates of repeated tests, path in SUITE_S_RATES_FILE, and outcomes.json
+   with every item's outcome, xfails apart from each kind of skip, path in
+   SUITE_OUTCOMES_FILE) to the staging folder, inside the container and not
+   mounted. Like every staged file, they go through the scan below.
 2. Every staged file is scanned for the prefixes of the test credentials
    the suite generates (SECRET_SCAN_MARKERS: `Bearer test-`, `test-dummy-`),
    and, when ANTHROPIC_API_KEY is set, for its value. A file that contains
@@ -28,8 +30,11 @@
    bind mount): run.sh copies it out with `docker cp` after the container
    exits, into a fresh ./artifacts/<run-id>/ on the host.
 
-Exit code: pytest's exit code (124 if the hard cap killed it). A leaked key
-or a failed copy fails the run (exit 1 if pytest passed).
+Exit code: pytest's exit code (124 if the hard cap killed it, 137 if it had
+to be killed). A leaked key or a failed copy fails the run with exit 1,
+whatever pytest returned (0, 13, 14, ...), except 124 / 137: a hard-cap
+stop is kept, so the reader sees the run was cut short (secret-scan.json
+still lists the leak).
 """
 
 import argparse
@@ -47,6 +52,7 @@ from harness.constants import (
     BASE_IMAGE_ENV,
     COST_FILE_ENV,
     IMAGE_ID_ENV,
+    OUTCOMES_FILE_ENV,
     RATES_FILE_ENV,
     SECRET_SCAN_MARKERS,
     WHOLE_RUN_KILL_GRACE_S,
@@ -54,10 +60,12 @@ from harness.constants import (
 )
 
 FAILURE_EXIT_CODE = 1
+HARD_CAP_EXIT_CODES = (124, 137)  # coreutils `timeout`: TERM'd at the cap, or KILLed after the grace
 SETUP_ERROR_EXIT_CODE = 2
 REPORT_NAME = "secret-scan.json"
 COST_FILE_NAME = "cost.json"  # written by tests/conftest.py (cost ledger), kept like any staged file
 RATES_FILE_NAME = "s-rates.json"  # written by harness/repeat.py (S pass rates of repeated tests)
+OUTCOMES_FILE_NAME = "outcomes.json"  # written by tests/conftest.py (outcome counts, xfails apart from skips)
 
 
 class KeyHandoffError(Exception):
@@ -145,6 +153,7 @@ def main():
     env[ARTIFACT_DIR_ENV] = tests_dir
     env[COST_FILE_ENV] = os.path.join(staging, COST_FILE_NAME)
     env[RATES_FILE_ENV] = os.path.join(staging, RATES_FILE_NAME)
+    env[OUTCOMES_FILE_ENV] = os.path.join(staging, OUTCOMES_FILE_NAME)
     argv = [
         "timeout", "--signal=TERM", "--kill-after=%d" % WHOLE_RUN_KILL_GRACE_S, str(WHOLE_RUN_TIMEOUT_S),
         sys.executable, "-m", "pytest", "--junitxml", os.path.join(staging, "junit.xml"),
@@ -183,7 +192,7 @@ def main():
     print("entrypoint: kept %d artifact file(s), %d copy error(s)" % (kept, len(errors)), flush=True)
     for error in errors:
         print("  copy error: " + error, flush=True)
-    if (leaks or errors) and rc == 0:
+    if (leaks or errors) and rc not in HARD_CAP_EXIT_CODES:
         return FAILURE_EXIT_CODE
     return rc
 

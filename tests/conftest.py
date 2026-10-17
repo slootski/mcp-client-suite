@@ -1,9 +1,20 @@
 """Shared fixtures: version gate, per-test sandbox, run.json, model-test skip,
 the suite cost ledger (cost.json, per-test cost printed at the end), the S
-pass rates of repeated tests (harness/repeat.py), and the "all model tests
-inconclusive" policy (docs/flake-policy.md)."""
+pass rates of repeated tests (harness/repeat.py), and the run-level gate
+(docs/flake-policy.md):
+
+  * key set: a run in which ANY model item was skipped as inconclusive
+    exits INCONCLUSIVE_EXIT_CODE (13), when pytest itself returned 0;
+  * no key: model items are skipped, unless they were asked for on purpose
+    (SUITE_REQUIRE_KEY=1, or a `-m` expression that selects a model item):
+    then the run stops before any test with MODEL_TESTS_NEED_KEY_EXIT_CODE
+    (14);
+  * every run prints "outcome counts" (xfailed apart from each kind of
+    skip) and writes the same to outcomes.json (SUITE_OUTCOMES_FILE).
+"""
 
 import html
+import json
 import logging
 import os
 import re
@@ -14,12 +25,11 @@ import tempfile
 
 import pytest
 
-from harness.check import expect_equal, step, wait_done, wait_failed, wait_start
+from harness.check import expect_equal, got, step, wait_done, wait_failed, wait_start
 from harness.claude_cli import OUTPUT_PREVIEW_SHOWN, CommandLog, run_claude
-from fakes.wirelog import fingerprint
+from fakes.wirelog import fingerprint, presence
 from harness import repeat
 from harness.constants import (
-    ALL_INCONCLUSIVE_EXIT_CODE,
     API_KEY_ENV,
     ARTIFACT_DIR_ENV,
     BASE_IMAGE_ENV,
@@ -34,14 +44,22 @@ from harness.constants import (
     FREE_ENV_PINS,
     FREE_ENV_UNSET,
     IMAGE_ID_ENV,
+    INCONCLUSIVE_EXIT_CODE,
     MAX_BUDGET_USD_PER_RUN,
     MODEL_ENV_PINS,
     MODEL_ENV_UNSET,
+    MODEL_TESTS_NEED_KEY_EXIT_CODE,
+    OUTCOMES_FILE_ENV,
     PASSTHROUGH_ENV,
     RATES_FILE_ENV,
+    REQUIRE_KEY_ENV,
+    REQUIRE_KEY_OFF,
+    REQUIRE_KEY_ON,
     SUITE_BUDGET_USD,
     TEST_SECRET_HEX_BYTES,
+    USAGE_ERROR_EXIT_CODE,
     VERSION_GATE_EXIT_CODE,
+    WITHHELD_CONFIG_FILE_NAMES,
     VERSION_GATE_TIMEOUT_S,
 )
 from harness.cost_ledger import CostLedger
@@ -52,9 +70,18 @@ from harness.run_record import RunRecord
 CLAUDE_VERSION_KEY = pytest.StashKey[str]()
 CALL_REPORT_KEY = pytest.StashKey[object]()
 LEDGER_KEY = pytest.StashKey[object]()
-MODEL_OUTCOMES_KEY = pytest.StashKey[list]()  # [(nodeid, outcome)] of model items that ran
-ALL_INCONCLUSIVE_KEY = pytest.StashKey[str]()  # the message, when the policy fired
-INCONCLUSIVE_MARK = "inconclusive"
+# {nodeid: {"outcome": text, "model": bool}} of every item that reported, in run order.
+OUTCOMES_KEY = pytest.StashKey[dict]()
+INCONCLUSIVE_ITEMS_KEY = pytest.StashKey[list]()  # model items skipped as inconclusive, when the gate fired
+INCONCLUSIVE_MARK = "inconclusive"  # every inconclusive skip reason holds it (harness/model_flow.py, repeat.py)
+MODEL_MARK = "model"
+NO_KEY_SKIP_REASON = "%s not set: model test skipped" % API_KEY_ENV
+SKIPPED_PREFIX = "skipped"
+XFAILED = "xfailed"
+PASSED = "passed"
+FAILED = "failed"
+TEARDOWN_ERROR = "error in teardown"
+OUTCOMES_JSON_INDENT = 2
 logger = logging.getLogger(__name__)
 HTML_PLUGIN_NAME = "html"  # pytest-html
 REPORT_TESTS_SUBDIR = "tests"  # report.html sits next to this folder (harness/entrypoint.py)
@@ -117,34 +144,103 @@ def pytest_sessionstart(session):
         cost_file=os.environ[COST_FILE_ENV],
     )
     repeat.init_session(config=session.config)
-    session.config.stash[MODEL_OUTCOMES_KEY] = []
+    session.config.stash[OUTCOMES_KEY] = {}
 
 
-def all_model_tests_inconclusive(*, outcomes):
-    """True when at least one model item ran and every one of them was
-    skipped as inconclusive (a gate or trigger skip, or an S rate item with
-    nothing conclusive to judge)."""
-    return bool(outcomes) and all(outcome.startswith("skipped") and INCONCLUSIVE_MARK in outcome
-                                  for _nodeid, outcome in outcomes)
+def is_inconclusive(*, outcome):
+    """A skip whose reason says inconclusive (a gate or trigger skip, or an
+    S rate item / the crash same-every-run item with nothing to judge)."""
+    return outcome.startswith(SKIPPED_PREFIX) and INCONCLUSIVE_MARK in outcome
+
+
+def outcome_groups(*, outcomes):
+    """The run's items by outcome, xfails apart from each kind of skip."""
+    groups = {"passed": [], "failed": [], "xfailed_known_defects": [], "skipped_inconclusive": [],
+              "skipped_no_key": [], "skipped_other": [], "other": []}
+    for nodeid in outcomes:
+        outcome = outcomes[nodeid]["outcome"]
+        if outcome == PASSED:
+            groups["passed"].append(nodeid)
+        elif outcome in (FAILED, TEARDOWN_ERROR):
+            groups["failed"].append({"nodeid": nodeid, "outcome": outcome})
+        elif outcome == XFAILED:
+            groups["xfailed_known_defects"].append(nodeid)
+        elif is_inconclusive(outcome=outcome):
+            groups["skipped_inconclusive"].append({"nodeid": nodeid, "reason": outcome})
+        elif outcome.startswith(SKIPPED_PREFIX) and NO_KEY_SKIP_REASON in outcome:
+            groups["skipped_no_key"].append(nodeid)
+        elif outcome.startswith(SKIPPED_PREFIX):
+            groups["skipped_other"].append({"nodeid": nodeid, "reason": outcome})
+        else:
+            groups["other"].append({"nodeid": nodeid, "outcome": outcome})
+    return groups
+
+
+def inconclusive_model_items(*, outcomes):
+    return [nodeid for nodeid in outcomes
+            if outcomes[nodeid]["model"] and is_inconclusive(outcome=outcomes[nodeid]["outcome"])]
+
+
+def write_outcomes_file(*, config, exit_status):
+    """outcomes.json next to cost.json: the outcome groups, their counts,
+    and the exit status the run ends with."""
+    outcomes = config.stash[OUTCOMES_KEY]
+    groups = outcome_groups(outcomes=outcomes)
+    data = {
+        "api_key_set": api_key_set(),
+        "exit_status": int(exit_status),
+        "counts": {name: len(groups[name]) for name in groups},
+        "groups": groups,
+        "inconclusive_model_items": inconclusive_model_items(outcomes=outcomes),
+    }
+    with open(os.environ[OUTCOMES_FILE_ENV], "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=OUTCOMES_JSON_INDENT, sort_keys=True)
+        handle.write("\n")
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """cost.json and s-rates.json on every run (a free-only run writes total
-    0 and no rates). Policy: with
-    the key set, a run whose model tests were ALL inconclusive proved
-    nothing about the client and exits ALL_INCONCLUSIVE_EXIT_CODE."""
+    """cost.json, s-rates.json and outcomes.json on every run (a free-only
+    run writes total 0 and no rates). Gate: with the key set, a run in
+    which any model item was skipped as inconclusive exits
+    INCONCLUSIVE_EXIT_CODE, unless pytest already failed (exit 1 and the
+    like stay as they are)."""
     if LEDGER_KEY in session.config.stash:
         session.config.stash[LEDGER_KEY].write()
     if repeat.S_RATES_KEY in session.config.stash:
         repeat.write_rates_file(config=session.config, path=os.environ[RATES_FILE_ENV])
-    if MODEL_OUTCOMES_KEY not in session.config.stash or not api_key_set():
+    if OUTCOMES_KEY not in session.config.stash:
         return
-    outcomes = session.config.stash[MODEL_OUTCOMES_KEY]
-    if all_model_tests_inconclusive(outcomes=outcomes) and session.exitstatus == 0:
-        message = "all model tests inconclusive (%d model item(s), none conclusive); exit %d" % (
-            len(outcomes), ALL_INCONCLUSIVE_EXIT_CODE)
-        session.config.stash[ALL_INCONCLUSIVE_KEY] = message
-        session.exitstatus = ALL_INCONCLUSIVE_EXIT_CODE
+    inconclusive = inconclusive_model_items(outcomes=session.config.stash[OUTCOMES_KEY])
+    if api_key_set() and inconclusive and session.exitstatus == 0:
+        session.config.stash[INCONCLUSIVE_ITEMS_KEY] = inconclusive
+        session.exitstatus = INCONCLUSIVE_EXIT_CODE
+    write_outcomes_file(config=session.config, exit_status=session.exitstatus)
+
+
+def write_outcome_counts(*, terminalreporter, config):
+    """The "outcome counts" section: xfails (known defects) apart from each
+    kind of skip, with the node ids of everything but passes and no-key
+    skips (those are counted only)."""
+    groups = outcome_groups(outcomes=config.stash[OUTCOMES_KEY])
+    terminalreporter.section("outcome counts (xfailed = known defects; skips by reason)")
+    terminalreporter.write_line("passed: %d" % len(groups["passed"]))
+    terminalreporter.write_line("failed or error: %d" % len(groups["failed"]))
+    for row in groups["failed"]:
+        terminalreporter.write_line("  %s (%s)" % (row["nodeid"], row["outcome"]))
+    terminalreporter.write_line("xfailed (known defects, strict xfail): %d" % len(groups["xfailed_known_defects"]))
+    for nodeid in groups["xfailed_known_defects"]:
+        terminalreporter.write_line("  " + nodeid)
+    terminalreporter.write_line("skipped as inconclusive: %d" % len(groups["skipped_inconclusive"]))
+    for row in groups["skipped_inconclusive"]:
+        terminalreporter.write_line("  %s: %s" % (row["nodeid"], row["reason"]))
+    terminalreporter.write_line("skipped for no key (%s not set): %d" % (API_KEY_ENV, len(groups["skipped_no_key"])))
+    terminalreporter.write_line("other skips: %d" % len(groups["skipped_other"]))
+    for row in groups["skipped_other"]:
+        terminalreporter.write_line("  %s: %s" % (row["nodeid"], row["reason"]))
+    if groups["other"]:
+        terminalreporter.write_line("other outcomes: %d" % len(groups["other"]))
+        for row in groups["other"]:
+            terminalreporter.write_line("  %s: %s" % (row["nodeid"], row["outcome"]))
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
@@ -165,9 +261,15 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.section("S pass rates of repeated tests (docs/flake-policy.md)")
         for line in repeat.summary_lines(config=config):
             terminalreporter.write_line(line)
-    if ALL_INCONCLUSIVE_KEY in config.stash:
+    if OUTCOMES_KEY in config.stash:
+        write_outcome_counts(terminalreporter=terminalreporter, config=config)
+    if INCONCLUSIVE_ITEMS_KEY in config.stash:
+        inconclusive = config.stash[INCONCLUSIVE_ITEMS_KEY]
         terminalreporter.section("model tier verdict")
-        terminalreporter.write_line(config.stash[ALL_INCONCLUSIVE_KEY], red=True)
+        terminalreporter.write_line("%d model item(s) skipped as inconclusive: they proved nothing; exit %d" % (
+            len(inconclusive), INCONCLUSIVE_EXIT_CODE), red=True)
+        for nodeid in inconclusive:
+            terminalreporter.write_line("  " + nodeid, red=True)
 
 
 def pytest_report_header(config):
@@ -176,15 +278,44 @@ def pytest_report_header(config):
     return "claude --version: (gate not run)"
 
 
+def require_key_setting():
+    """SUITE_REQUIRE_KEY: unset or "" is off, "1" is on; any other value
+    stops the run with pytest's usage-error code."""
+    if REQUIRE_KEY_ENV not in os.environ:
+        return False
+    value = os.environ[REQUIRE_KEY_ENV]
+    if value not in (REQUIRE_KEY_OFF, REQUIRE_KEY_ON):
+        pytest.exit("%s=%r: allowed values are %r (on) and %r or unset (off)" % (
+            REQUIRE_KEY_ENV, value, REQUIRE_KEY_ON, REQUIRE_KEY_OFF), returncode=USAGE_ERROR_EXIT_CODE)
+    return value == REQUIRE_KEY_ON
+
+
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
-    """`model` tests need the key; without it they are skipped, not failed,
-    so the free tests still run on a machine with no key."""
+    """`model` tests need the key. trylast: `-m` / `-k` deselection has
+    already run, so items is what will run. Without the key:
+      * asked for on purpose (SUITE_REQUIRE_KEY=1, or a `-m` expression and
+        at least one selected model item): stop before any test with
+        MODEL_TESTS_NEED_KEY_EXIT_CODE, so a CI job whose secret is missing
+        cannot go green;
+      * otherwise: model items are skipped, not failed, so the free tests
+        still run on a machine with no key."""
+    required = require_key_setting()
+    model_items = [item for item in items if MODEL_MARK in item.keywords]
+    step(text="key gate: %s set %s, %s %s, -m %r, %d of %d selected item(s) are model items" % (
+        API_KEY_ENV, api_key_set(), REQUIRE_KEY_ENV, "on" if required else "off", config.option.markexpr,
+        len(model_items), len(items)))
     if api_key_set():
         return
-    skip = pytest.mark.skip(reason="%s not set: model test skipped" % API_KEY_ENV)
-    for item in items:
-        if "model" in item.keywords:
-            item.add_marker(skip)
+    if required:
+        pytest.exit("%s=%s but %s is not set: model tests were required; no test ran" % (
+            REQUIRE_KEY_ENV, REQUIRE_KEY_ON, API_KEY_ENV), returncode=MODEL_TESTS_NEED_KEY_EXIT_CODE)
+    if config.option.markexpr and model_items:
+        pytest.exit("-m %r selects %d model item(s) but %s is not set; no test ran" % (
+            config.option.markexpr, len(model_items), API_KEY_ENV), returncode=MODEL_TESTS_NEED_KEY_EXIT_CODE)
+    skip = pytest.mark.skip(reason=NO_KEY_SKIP_REASON)
+    for item in model_items:
+        item.add_marker(skip)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -199,9 +330,13 @@ def pytest_runtest_makereport(item, call):
         # goes on the call report (the setup report when the call never ran).
         target = item.stash[CALL_REPORT_KEY] if CALL_REPORT_KEY in item.stash else report
         attach_artifacts_to_html_report(item=item, report=target)
-    if "model" in item.keywords and MODEL_OUTCOMES_KEY in item.config.stash and (
-            report.when == "call" or (report.when == "setup" and not report.passed)):
-        item.config.stash[MODEL_OUTCOMES_KEY].append((item.nodeid, outcome_text(report=report)))
+    if OUTCOMES_KEY in item.config.stash:
+        outcomes = item.config.stash[OUTCOMES_KEY]
+        is_model = MODEL_MARK in item.keywords
+        if report.when == "call" or (report.when == "setup" and not report.passed):
+            outcomes[item.nodeid] = {"outcome": outcome_text(report=report), "model": is_model}
+        elif report.when == "teardown" and report.failed:
+            outcomes[item.nodeid] = {"outcome": TEARDOWN_ERROR, "model": is_model}
 
 
 def attach_artifacts_to_html_report(*, item, report):
@@ -295,20 +430,34 @@ class Sandbox:
         """A throwaway credential for this test only. It is registered, so it
         is redacted from command logs and copied config, and the teardown
         scan fails the test if it is found anywhere in the artifacts."""
-        return self.registry.register(value=BEARER_TEST_PREFIX + secrets.token_hex(TEST_SECRET_HEX_BYTES))
+        return self.registry.register(value=BEARER_TEST_PREFIX + secrets.token_hex(TEST_SECRET_HEX_BYTES),
+                                      presence_only=False)
 
     def new_dummy_secret(self):
         """A throwaway env-var credential (never the real key), registered
         like new_bearer."""
-        return self.registry.register(value=DUMMY_SECRET_PREFIX + secrets.token_hex(TEST_SECRET_HEX_BYTES))
+        return self.registry.register(value=DUMMY_SECRET_PREFIX + secrets.token_hex(TEST_SECRET_HEX_BYTES),
+                                      presence_only=False)
 
     def set_env(self, *, name, value, secret):
         """Set one env var for every later claude call of this test, and
-        record it in run.json (a secret as its fingerprint only)."""
+        record it in run.json (a secret as its fingerprint only). Only for
+        values the test made up: the live API key goes through
+        set_live_key_env, which writes no fingerprint."""
         self.env[name] = value
         step(text="set %s=%s for every later claude call of this test" % (
             name, fingerprint(value=value) if secret else value))
         self.record.override_env(name=name, shown=fingerprint(value=value) if secret else value)
+
+    def set_live_key_env(self, *, name, value):
+        """Set the live API key for every later claude call of this test.
+        The log line and run.json say only that it is set ({"set": true}):
+        not the value and not its fingerprint, so no artifact carries a
+        hash of the real key."""
+        self.env[name] = value
+        step(text="set %s=%s (the live API key: presence only, no value or fingerprint) for every later "
+                  "claude call of this test" % (name, presence()))
+        self.record.override_env(name=name, shown=presence())
 
     def unset_env(self, *, name):
         """Remove one pinned env var for every later claude call of this
@@ -373,12 +522,13 @@ def free_sandbox(request, tmp_path):
 @pytest.fixture
 def model_sandbox(request, tmp_path):
     """Sandbox for a `model` test: MODEL_ENV_PINS and the real API key. The
-    key is registered as a secret: redacted from command logs, streams and
-    copied config, and the teardown scan (which covers the --debug-file, as
-    it is written into the artifact dir) fails the test if it is found."""
+    key is registered as a presence-only secret: redacted from command logs,
+    streams and copied config with no hash, recorded as {"set": true}, and
+    the teardown scan (which covers the --debug-file, as it is written into
+    the artifact dir) fails the test if it is found."""
     sandbox = new_sandbox(request=request, tmp_path=tmp_path, pins=MODEL_ENV_PINS, unset=MODEL_ENV_UNSET)
-    key = sandbox.registry.register(value=os.environ[API_KEY_ENV])
-    sandbox.set_env(name=API_KEY_ENV, value=key, secret=True)
+    key = sandbox.registry.register(value=os.environ[API_KEY_ENV], presence_only=True)
+    sandbox.set_live_key_env(name=API_KEY_ENV, value=key)
     yield sandbox
     finish_sandbox(request=request, sandbox=sandbox)
 
@@ -397,18 +547,25 @@ def cost_ledger(request):
 
 
 def finish_sandbox(*, request, sandbox):
-    """Copy the config dirs (redacted), write run.json, scan for secrets."""
+    """Copy the config dirs (redacted; WITHHELD_CONFIG_FILE_NAMES never),
+    write run.json, scan for secrets."""
     artifact_dir = sandbox.artifact_dir
     registry = sandbox.registry
     record = sandbox.record
-    dropped = copy_tree_redacted(
-        source=sandbox.config_dir, target=os.path.join(artifact_dir, "claude-config"), registry=registry
-    )
-    for extra in sandbox.extra_config_dirs:
-        dropped += copy_tree_redacted(
-            source=extra, target=os.path.join(artifact_dir, os.path.basename(extra)), registry=registry
-        )
+    copies = [(sandbox.config_dir, os.path.join(artifact_dir, "claude-config"))] + [
+        (extra, os.path.join(artifact_dir, os.path.basename(extra))) for extra in sandbox.extra_config_dirs]
+    dropped = []
+    withheld = []
+    for source, target in copies:
+        step(text="copy config dir %s to the artifacts (redacted; %s withheld)" % (
+            os.path.basename(source), list(WITHHELD_CONFIG_FILE_NAMES)))
+        copied = copy_tree_redacted(source=source, target=target, registry=registry,
+                                    withheld_names=WITHHELD_CONFIG_FILE_NAMES)
+        dropped += copied["dropped_binary"]
+        withheld += [os.path.join(os.path.basename(source), relative) for relative in copied["withheld"]]
+    got(what="config files withheld from the artifacts (never copied, whatever they hold)", value=withheld)
     record.observe(key="claude_config_files_not_copied_binary", value=dropped)
+    record.observe(key="claude_config_files_withheld", value=withheld)
     if CALL_REPORT_KEY in request.node.stash:
         outcome = outcome_text(report=request.node.stash[CALL_REPORT_KEY])
     else:
