@@ -1,0 +1,8 @@
+artifacts/
+prompts/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.gitignore
+.DS_Store

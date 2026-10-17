@@ -1,0 +1,33 @@
+# Run output: one folder per ./run.sh run, plus the `latest` pointer file.
+# Holds report.html, suite.log, wire logs and copied config: never commit.
+artifacts/
+
+# Python and pytest caches.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Local virtual envs (the suite itself runs in Docker and needs none).
+.venv/
+venv/
+env/
+
+# Secrets: the API key is only ever read from the shell env by run.sh.
+.env
+.env.*
+*.key
+
+# IDEs and editors.
+.idea/
+.vscode/
+*.swp
+*~
+
+# macOS Finder files.
+.DS_Store
