@@ -155,8 +155,8 @@ in which at least one test ran. In the folder:
   rejects exits 15. `tests/test_harness_offline.py` replays recorded runs
   with one fact broken at a time to prove the checks fail.
   `tests/test_gate.py` runs pytest inside pytest (pytester) to check exits
-  13 and 14 and that xfails are counted apart from skips, and replays a
-  recorded run with a 401 to check exit 15 with no retry. Both need no
+  13 and 14 and that xfails are counted apart from skips, and replays
+  recorded 401 and `authentication_failed` runs to check exit 15, no retry. Both need no
   model call.
 - **Strict xfail only for documented behavior that a fix would flip**
   (findings 1, 3, 4, 5), raised after every hard assert, so a broken wire
