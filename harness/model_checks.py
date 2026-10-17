@@ -70,14 +70,15 @@ def model_rejected(*, stream, model):
 
 
 def key_rejected(*, stream):
-    """A reason when the API rejected the key, else None: the result event's
-    `api_error_status` (observed on 2.1.296: on every result event, null on
-    success; not in headless.md) or an api_retry event's `error_status`
-    (headless.md:247) is 401/403, or its `error` is authentication_failed
-    (headless.md:249)."""
+    """A reason when the API rejected the key, else None: result
+    `api_error_status` (observed on 2.1.296, null on success; not in
+    headless.md) or api_retry `error_status` (headless.md:247) is 401/403,
+    or api_retry `error` is authentication_failed (headless.md:249)."""
     result = stream.result
     if result is not None and "api_error_status" in result and result["api_error_status"] in API_KEY_REJECTED_STATUSES:
         return "result api_error_status %s" % result["api_error_status"]
+    # The first 401/403 api_retry stops the run, even if a later retry would pass: fine, the
+    # suite sets ANTHROPIC_API_KEY, not apiKeyHelper (headless.md:238). A 403 billing_error lands here too.
     for event in stream.events_of(event_type="system", subtype="api_retry"):
         if "error" in event and event["error"] == API_RETRY_AUTH_FAILED:
             return "api_retry error %s" % API_RETRY_AUTH_FAILED

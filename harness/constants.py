@@ -174,10 +174,9 @@ OUTCOMES_FILE_ENV = "SUITE_OUTCOMES_FILE"  # set by harness.entrypoint
 # same-every-run item without its runs therefore exits 13 too.
 INCONCLUSIVE_EXIT_CODE = 13
 # With no key, a run that asked for model items on purpose (REQUIRE_KEY_ENV
-# = REQUIRE_KEY_ON, a `-m` expression that selects a model item, or a
-# selection made only of model items, e.g. `-k <model test>`) stops before
-# any test with MODEL_TESTS_NEED_KEY_EXIT_CODE, instead of skipping them
-# and exiting 0. With no key, a selection with free items skips the model ones.
+# = REQUIRE_KEY_ON, a `-m` expression that selects a model item, or only
+# model items selected, e.g. `-k <model test>`) stops before any test with
+# MODEL_TESTS_NEED_KEY_EXIT_CODE. Otherwise, with no key, model items are skipped.
 MODEL_TESTS_NEED_KEY_EXIT_CODE = 14
 # The Anthropic API rejected the key (HTTP 401 or 403): the run stops at the
 # first model run that shows it, with no retry (harness/model_flow.py,

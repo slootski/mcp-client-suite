@@ -87,10 +87,15 @@ def test_model_inconclusive():
 def test_model_xfails():
     raise DocumentedBehaviorMismatch(FORCED)
 '''
-REJECTED_STATUS = 401
-API_RETRY_EVENT = {"type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10, "retry_delay_ms": 500,
-                   "error_status": REJECTED_STATUS, "error": API_RETRY_AUTH_FAILED}
+REJECTED_RESULT = {"api_error_status": 401, "is_error": True}
+RESULT_AS_RECORDED = {}
+NO_RETRY_EVENTS = []
 
+
+def api_retry(*, error, error_status):
+    """A system/api_retry event (fields: headless.md:240-251)."""
+    return {"type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10, "retry_delay_ms": 500,
+            "error_status": error_status, "error": error}
 
 def inner_run(*, pytester, monkeypatch, env, args):
     """Run the inner session in a subprocess: (exit code, outcomes.json, stdout)."""
@@ -160,25 +165,23 @@ def test_xfail_counted_apart_from_skips(pytester, monkeypatch):
 
 
 # ---------------------------------------------------------------- exit 15
-def rejected_stream(*, text, drop_tool_use, rejection):
-    """The recorded stream with the API's rejection written in. rejection
-    "result": the result event gets api_error_status 401 and is_error true;
-    "api_retry": an api_retry event (authentication_failed) after init.
-    drop_tool_use: every tool_use and tool_result block removed too."""
+def rejected_stream(*, text, drop_tool_use, result_fields, retry_events):
+    """The recorded stream with result_fields merged into its result event
+    and retry_events inserted after system/init; drop_tool_use: every
+    tool_use and tool_result block removed too."""
     lines = []
     for line in text.splitlines():
         event = json.loads(line)
-        if event["type"] == "result" and rejection == "result":
-            event["api_error_status"] = REJECTED_STATUS
-            event["is_error"] = True
+        if event["type"] == "result":
+            event.update(result_fields)
         if drop_tool_use and event["type"] in ("assistant", "user") and isinstance(event["message"]["content"], list):
             event["message"]["content"] = [block for block in event["message"]["content"]
                                            if block["type"] not in ("tool_use", "tool_result")]
             if not event["message"]["content"]:
                 continue
         lines.append(json.dumps(event, ensure_ascii=False))
-        if event["type"] == "system" and "subtype" in event and event["subtype"] == "init" and rejection == "api_retry":
-            lines.append(json.dumps(API_RETRY_EVENT))
+        if event["type"] == "system" and "subtype" in event and event["subtype"] == "init":
+            lines += [json.dumps(retry) for retry in retry_events]
     return "\n".join(lines) + "\n"
 
 
@@ -190,12 +193,8 @@ def handshake_only(*, records):
     return records[:calls[0]] if calls else records
 
 
-@pytest.mark.parametrize("rejection, drop_tool_use", [
-    ("result", False), ("result", True), ("api_retry", False),
-], ids=["result_401", "result_401_no_tool_use", "api_retry_authentication_failed"])
-def test_key_rejected_stops_the_run_with_15(free_sandbox, request, monkeypatch, rejection, drop_tool_use):
-    text = rejected_stream(text=recorded_stream_text(), drop_tool_use=drop_tool_use, rejection=rejection)
-    got(what="key_rejected on the mutated stream", value=key_rejected(stream=parse_stream(text=text)))
+def stub_flow(*, sandbox, request, monkeypatch, text, drop_tool_use):
+    """Replay `text` as attempt0 (the recorded run is queued as attempt1)."""
     records = {server: recorded_wire(server=server) for server in CALC_SERVERS}
     if drop_tool_use:
         records = {server: handshake_only(records=records[server]) for server in records}
@@ -203,8 +202,25 @@ def test_key_rejected_stops_the_run_with_15(free_sandbox, request, monkeypatch, 
         server: shifted(records=records[server], by_s=-ATTEMPT0_SHIFT_S) for server in records})
     stub = StubRunPrint(attempts=[attempt0, recorded_attempt()])
     monkeypatch.setattr(model_flow, "run_print", stub)
-    step(text="replay: attempt0 = the recorded D15/T1 run, key rejected in its %s event (tool_use %s); attempt1 = "
-              "the recorded run" % (rejection, "removed" if drop_tool_use else "kept"))
+    got(what="key_rejected on attempt0's stream", value=key_rejected(stream=parse_stream(text=text)))
+    return stub
+
+
+# Each case drives one branch of key_rejected only.
+@pytest.mark.parametrize("result_fields, retry_events, drop_tool_use", [
+    (REJECTED_RESULT, NO_RETRY_EVENTS, False),
+    (REJECTED_RESULT, NO_RETRY_EVENTS, True),
+    (RESULT_AS_RECORDED, [api_retry(error="unknown", error_status=403)], False),
+    (RESULT_AS_RECORDED, [api_retry(error=API_RETRY_AUTH_FAILED, error_status=None)], False),
+], ids=["result_401", "result_401_no_tool_use", "api_retry_error_status_403", "api_retry_authentication_failed"])
+def test_key_rejected_stops_the_run_with_15(free_sandbox, request, monkeypatch, result_fields, retry_events,
+                                            drop_tool_use):
+    text = rejected_stream(text=recorded_stream_text(), drop_tool_use=drop_tool_use, result_fields=result_fields,
+                           retry_events=retry_events)
+    stub = stub_flow(sandbox=free_sandbox, request=request, monkeypatch=monkeypatch, text=text,
+                     drop_tool_use=drop_tool_use)
+    step(text="replay: attempt0 = the recorded D15/T1 run with result fields %s, api_retry events %s (tool_use %s); "
+              "attempt1 = the recorded run" % (result_fields, retry_events, "removed" if drop_tool_use else "kept"))
     with pytest.raises(pytest.exit.Exception) as caught:
         run_stubbed(sandbox=free_sandbox, request=request, stub=stub)
     got(what="pytest.exit message", value=str(caught.value))
@@ -214,14 +230,21 @@ def test_key_rejected_stops_the_run_with_15(free_sandbox, request, monkeypatch, 
     expect_equal(what="attempts the harness started (no retry)", expected=["attempt0"], actual=stub.labels)
 
 
-def test_key_accepted_recording_does_not_stop(free_sandbox, request, monkeypatch):
-    """Control: the recording as it is (api_error_status null) runs to the end."""
-    result = parse_stream(text=recorded_stream_text()).result
+# Controls: retries that are not a key rejection must not stop the run.
+@pytest.mark.parametrize("retry_events", [
+    NO_RETRY_EVENTS,
+    [api_retry(error="rate_limit", error_status=429)],
+    [api_retry(error="overloaded", error_status=529)],
+    [api_retry(error="server_error", error_status=None)],
+], ids=["as_recorded", "api_retry_429_rate_limit", "api_retry_529_overloaded", "api_retry_null_status"])
+def test_key_accepted_recording_does_not_stop(free_sandbox, request, monkeypatch, retry_events):
+    text = rejected_stream(text=recorded_stream_text(), drop_tool_use=False, result_fields=RESULT_AS_RECORDED,
+                           retry_events=retry_events)
+    result = parse_stream(text=text).result
     expect_equal(what="recorded result event: api_error_status", expected=(True, None),
                  actual=("api_error_status" in result, result["api_error_status"]))
-    stub = StubRunPrint(attempts=[recorded_attempt()])
-    monkeypatch.setattr(model_flow, "run_print", stub)
-    step(text="replay: attempt0 = the recorded D15/T1 run, unchanged")
+    stub = stub_flow(sandbox=free_sandbox, request=request, monkeypatch=monkeypatch, text=text, drop_tool_use=False)
+    step(text="replay: attempt0 = the recorded D15/T1 run with api_retry events %s" % retry_events)
     triggered = run_stubbed(sandbox=free_sandbox, request=request, stub=stub)
     expect_equal(what="attempts the harness started", expected=["attempt0"], actual=stub.labels)
     expect_equal(what="inconclusive reason of the flow", expected=None, actual=triggered.inconclusive)
