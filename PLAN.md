@@ -31,10 +31,11 @@ Harness self-checks (free, no model call): `tests/test_harness_offline.py`
 replays recorded model runs through the real test code with one fact
 broken at a time, and checks that each break fails the test (not skip,
 not xfail), and that a fixed-client shape of each strict xfail would
-XPASS. The replays cover the deny rule, the no-rule control, the matcher
-without `.*`, exit 1, `onFailure: "block"`, `ask`, and a crash where the
-client does not restart. `tests/test_gate.py` runs pytest inside pytest
-to check the run's exit codes 13, 14 and 15.
+XPASS. The recorded runs cover the deny rule, the no-rule control, the
+matcher without `.*`, exit 1, `onFailure: "block"`, and a crash where the
+client does not restart; the `ask` replay is synthesized from the deny
+recording. `tests/test_gate.py` checks the run's exit codes: 13 and 14 by
+pytest inside pytest; 15 by a stub replay through the flow.
 
 Totals: 76 test ideas in docs 12 to 23 (one of them, D13/T7, merged into
 D20/T3), plus 9 harness checks from doc 11. 27 ideas are implemented (3
@@ -152,7 +153,7 @@ items (54 free, 44 model). The first item to build next is D23/T13
 | D22/T2 | Flake policy table: fact, variance, treatment | the table | - | P0 | implemented: [`docs/flake-policy.md`](docs/flake-policy.md) |
 | D22/T3 | Sampling cannot be set from outside: why the in-depth tests check wire facts | - | - | P1 | implemented: `docs/flake-policy.md` ("Classes") |
 | D22/T4 | Tool order in `tools/list` does not change which tool is called | wire log | S | P1 | not implemented[^scope] |
-| D22/T5 | Scripted fake model behind `ANTHROPIC_BASE_URL` | - | D | P2 | not implemented[^scope]. S facts need the real model; D facts could move to a scripted model, which would see the same no-tool-search configuration the suite already pins (mcp.md:313). The per-change tier a team version would add first |
+| D22/T5 | Scripted fake model behind `ANTHROPIC_BASE_URL` | - | D | P2 | not implemented, for time: S facts need the real model; D facts could move to a scripted model, which would see the same no-tool-search configuration the suite already pins (mcp.md:313). The per-change tier a team version would add first |
 
 ## Question 5: What else has to be true
 
@@ -165,7 +166,7 @@ items (54 free, 44 model). The first item to build next is D23/T13
 | D23/T6 | Root-level `anyOf`/`oneOf`/`allOf` schema: flattened or skipped | stream | D | P2 | not implemented: observe-only |
 | D23/T7 | Tool name over 128 chars is left out, the others stay | stream + debug log | D | P2 | not implemented: observe-only |
 | D23/T8 | `requiresUserInteraction` tool under `--permission-prompts none` is denied | stream | D | P1 | not implemented[^scope] |
-| D23/T9 | PreToolUse hook denies `delete_all`: no `tools/call` for it; variants: hook `ask` (denied in `-p`, hooks.md:1934), matcher without `.*`, hook exit 1, `onFailure: "block"` | wire log + hook log + stream | D (S trigger) | P0 | implemented: `tests/test_permissions.py::test_pre_tool_use_hook_guards_mcp_tool` (5 cases) |
+| D23/T9 | PreToolUse hook denies `delete_all`: no `tools/call` for it; variants: hook `ask` (hooks.md:1934: in `-p` it is denied and its reason goes to the tool result), matcher without `.*`, hook exit 1, `onFailure: "block"` | wire log + hook log + stream | D (S trigger) | P0 | implemented: `tests/test_permissions.py::test_pre_tool_use_hook_guards_mcp_tool` (5 cases) |
 | D23/T10 | Deny rule for one tool (the tool is absent from `system/init`, cli-reference.md:87; no `tools/call`); least privilege for a server named `guard__ops` (server-level deny; allow on `mcp__guard`) | wire log of both fakes + stream (`permission_denials`, `permission_denied`) | D (S trigger) | P0 | implemented: `tests/test_permissions.py::test_deny_rule_keeps_call_from_server`, `::test_tool_without_allow_rule_is_denied` (control), `::test_server_allow_rule_does_not_reach_double_underscore_server` (strict xfail), `::test_server_deny_rule_stops_double_underscore_server` (strict xfail) |
 | D23/T11 | `ANTHROPIC_API_KEY` reaches a stdio server by default, not with `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` or `CLAUDE_CODE_MCP_ALLOWLIST_ENV=1`; merged with D13/T4 | wire log (sha8 + length; env names) | D | P0 | implemented: `tests/test_credentials.py::test_stdio_inherits_credentials_by_default`, `::test_stdio_env_scrub_strips_inherited_credentials`, `::test_stdio_allowlist_env_passes_only_baseline_and_configured_env` (env-vars.md:334) |
 | D23/T12 | Invalid input schema next to a good tool | stream | D | P1 | not implemented[^scope] |
@@ -181,6 +182,6 @@ One row per fact the suite checks, with its treatment:
 [^scope]: Not built because the build was cut to the 10 items of doc 24,
     not because the idea was wrong. The mail asks for about 2-3 hours;
     this work took longer: about 7 hours of the candidate's time in the
-    build and review sessions (PROMPTS.md timestamps), plus writing the
-    plan on 10-14 to 10-16, which was not timed. A row gives its own
+    plan-review and build sessions (PROMPTS.md timestamps), plus writing
+    the plan on 10-14 to 10-16, which was not timed. A row gives its own
     reason only when the reason is not this cut.

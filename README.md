@@ -87,11 +87,11 @@ Measured on an Apple silicon Mac with Docker Desktop, image layers cached.
   `SUITE_BUDGET_USD` ($5.00); if not, it stops with exit 11.
 
 **Time spent.** Longer than the 2-3 h box. About 7 hours of the
-candidate's time in the build and review sessions (PROMPTS.md timestamps:
-10-16 17:55-21:46; 10-17 00:05-00:58, 11:43-13:21, 13:45-14:13), plus
-writing the plan on 10-14 to 10-16, which was not timed. The agents built
-overnight, unattended; the fix rounds after the panel reviews each ran
-from one prompt. The extra time went into proving the checks can fail
+candidate's time in the plan-review and build sessions (PROMPTS.md
+timestamps: 10-16 17:55-21:46; 10-17 00:05-00:58, 11:43-13:21,
+13:45-14:13), plus writing the plan on 10-14 to 10-16, which was not
+timed. The agents built overnight, unattended. The repo-review and
+repo-fix sessions after 14:13 are not counted; each ran from one prompt. The extra time went into proving the checks can fail
 (offline replays), and the build was cut to 10 items ([PLAN.md](PLAN.md)).
 
 A 3-hour cut would have kept: the two fake servers and the wire-log
@@ -155,9 +155,10 @@ in which at least one test ran. In the folder:
   rejects exits 15. `tests/test_harness_offline.py` replays recorded runs
   with one fact broken at a time to prove the checks fail.
   `tests/test_gate.py` runs pytest inside pytest (pytester) to check exits
-  13 and 14 and that xfails are counted apart from skips, and replays
-  recorded 401 and `authentication_failed` runs to check exit 15, no retry. Both need no
-  model call.
+  13 and 14 and that xfails are counted apart from skips. For exit 15 it
+  replays a recorded success run with the API's rejection written into
+  its stream: result 401 with and without a tool_use; an api_retry with
+  401/403 or `authentication_failed`: one attempt, exit 15.
 - **Strict xfail only for documented behavior that a fix would flip**
   (findings 1, 3, 4, 5), raised after every hard assert, so a broken wire
   fact still fails; an XPASS fails the run. A doc gap or an out-of-spec
@@ -166,7 +167,7 @@ in which at least one test ran. In the folder:
 - **Pinned.** `@anthropic-ai/claude-code@2.1.296` on
   `node:22-bookworm-slim` pinned by digest, autoupdater off, pytest
   plugins pinned; exit 10 if `claude --version` is not 2.1.296. Model
-  `claude-haiku-5-5` (cheap, enough for a named tool call), `--max-turns
+  `claude-haiku-5-5`, `--max-turns
   4`, `--max-budget-usd 0.25` per run. Timeouts: 120 s per test (360 s
   for model tests), 1500 s per session, 1800 s per run. Model tests pin
   `MCP_PROTOCOL_NEGOTIATION=legacy`; the user default (`server/discover`
@@ -182,10 +183,9 @@ in which at least one test ran. In the folder:
   and gives the key to pytest only. Artifacts record the key as "set",
   never as a hash. Residual risk: a `kill -9` of `run.sh` between the copy
   and `docker start` leaves the file in the container until `docker rm`.
-- **Why not the official MCP conformance runner.** It drives a client
-  over Streamable HTTP only, one command per scenario; most tool
-  scenarios still need a model, and it does not cover Claude Code's
-  config, permissions, hooks or model path.
+- **Why not the official MCP conformance runner.** It speaks Streamable
+  HTTP only and does not cover Claude Code's config, permissions, hooks
+  or model path.
 - **Why not a scripted model.** S facts (which tool the model picks, with
   which values) need the real model. D facts could move to a scripted
   model behind `ANTHROPIC_BASE_URL`; the suite already runs with tool
@@ -230,10 +230,10 @@ What it would take, and what is already in the code:
 - **Scope.** 27 of 76 plan ideas are built; PLAN.md gives the reason for
   each one that is not. Not built, among others: pagination and
   `list_changed`, junk on stdout, wrong ids, HTTP reconnect, output size.
-- **Ask: only the hook case.** The hook `ask` case is tested
-  (`tests/test_permissions.py::test_pre_tool_use_hook_guards_mcp_tool[ask]`):
-  in `-p` with `--permission-prompts none`, a hook's `ask` is denied and
-  its reason reaches the tool result (hooks.md:1934). Not tested: `ask`
+- **Ask: only the hook case.** hooks.md:1934: a hook's `ask` in `-p` is
+  denied and its reason goes to the tool result; checked by
+  `tests/test_permissions.py::test_pre_tool_use_hook_guards_mcp_tool[ask]`
+  (with `--permission-prompts none`). Not tested: `ask`
   permission rules and an Ask host (`--permission-prompt-tool`).
 - **No managed MCP policy.** `allowedMcpServers` / `deniedMcpServers` and
   `managed-mcp.json` are not tested (PLAN: managed policy): a deployed
@@ -259,14 +259,14 @@ What it would take, and what is already in the code:
 
 ```
 .
-├── run.sh              one command: build, run in a container, copy results out
+├── run.sh              one command: build, run, copy results out
 ├── Dockerfile          pinned base image, Claude Code 2.1.296, pytest, non-root
 ├── pytest.ini          markers (free, model), timeouts, strict xfail
-├── harness/            run `claude`, the model-run flow, checks, cost ledger, secret scan, entrypoint
-├── fakes/              scriptable stdio and HTTP MCP servers that log every message; hook scripts
-├── tests/              the tests; tests/data/ holds recorded runs for the offline self-checks
-├── docs/               flake-policy.md (every fact and its treatment), log-format.md, exit-codes.md
-├── evidence/           one-off probes cited in observations.md (wire logs, the bwrap probe)
+├── harness/            run `claude`, the model-run flow, checks, cost, secret scan
+├── fakes/              scriptable stdio and HTTP MCP servers; hook scripts
+├── tests/              the tests; tests/data/ holds recorded runs
+├── docs/               flake-policy.md, log-format.md, exit-codes.md
+├── evidence/           one-off probes cited in observations.md
 ├── prompts/            the AI prompts: plan/, plan-review/, and the build prompts 01-19
 ├── observations.md     what 2.1.296 did, with dates and evidence
 ├── PLAN.md             every test idea, with its status

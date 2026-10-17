@@ -24,9 +24,6 @@ transcripts.
    prompt ran on the repo, twice. After each review, a repo-fix prompt was
    given to a new session, which ran Dev and QA agents in parallel units
    (rows 38 and 39).
-6. **The suite's own model calls** use `claude-haiku-5-5`
-   (`harness/constants.py`, `MODEL_ID`), with `--max-turns 4` and
-   `--max-budget-usd 0.25` per run.
 
 ## Who wrote what
 
@@ -148,8 +145,8 @@ from docx to md.
 
 ### Session 3: the build
 
-Claude Code session `b8db9188`, 2026-10-17 00:05 to 2026-10-17 14:13, 73
-messages. This session wrote build prompts 01 to 19 and ran the Dev and
+Claude Code session `b8db9188`, 2026-10-17 00:05 to 2026-10-17 14:13
+(active 00:05-00:58, 11:43-13:21, 13:45-14:13), 73 messages. This session wrote build prompts 01 to 19 and ran the Dev and
 QA agents.
 
 - 00:07 (paraphrased): "I am thinking of two agents, QA and Dev. They
@@ -170,6 +167,7 @@ QA agents.
   future manager of the team. Improve the prompt; ask questions." This
   became the repo-review prompt (row 38).
 
-The other 82 messages of the three sessions were short steering and
-status lines (what is running, how much was spent, open the report, set
-up git); they are not listed.
+The other 82 messages of the three sessions (91 in all) were short
+steering and status lines (what is running, how much was spent, open the
+report, set up git), plus one message that held the API key and one
+paste of another tool's output, dropped; they are not listed.
