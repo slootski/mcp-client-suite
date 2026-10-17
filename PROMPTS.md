@@ -6,59 +6,49 @@ transcripts.
 ## How AI was used
 
 1. **Research.** The public Claude Code docs and the MCP spec were read
-   into two fact sheets: R01 (Claude Code MCP facts, checked 2026-10-14 for
-   2.1.296) and R06 (tool search, headless `-p`, spec pagination and
-   progress). Four MCP spec pages were saved as copies (R02 to R05). The
-   fact sheets are in this repo; the research itself is not a prompt file
-   here.
-2. **Plan as prompt files.** The plan was written as prompt files for an AI
-   build agent (called "planning agent" in the table below): doc 00 (reading order), docs 11 to 23 (one topic each,
-   every test idea tagged P0/P1/P2) and doc 24 (handoff: state, decisions,
-   the 10 items to build). They are kept verbatim in `prompts/plan/`.
-   PLAN.md is built from them.
+   into two fact sheets (R01, R06); four MCP spec pages were saved as
+   copies (R02 to R05).
+2. **Plan as prompt files** for an AI build agent ("planning agent" below):
+   docs 00 and 11 to 24, verbatim in `prompts/plan/`. PLAN.md is built
+   from them.
 3. **Plan review, 5 rounds.** Each round ran the review prompt
-   (`prompts/plan-review/mcp-plan-review-prompt.md`) in a new session, with
-   the plan folder as input. It plays a panel of experts and writes a
-   ranked list of fixes. The fixes went back into docs 11 to 24 before the
-   next round. After round 5, doc 24 trimmed the build to 10 items.
+   (`prompts/plan-review/mcp-plan-review-prompt.md`) in a new session. It
+   plays a panel of experts and writes a ranked list of fixes, which went
+   back into the docs before the next round.
 4. **Build loop.** An orchestrating Claude Code session ran the build in
-   steps. For each step it wrote a Dev prompt, ran a Dev agent on it, then
-   wrote a QA prompt and ran a QA agent that checked the Dev's work against
-   that prompt and reported findings by severity. Each QA's findings went
-   into the next Dev prompt ("Fix first"). A failed QA (step 1) got its own
-   fix and re-check prompts (03, 04). Both agents ran the suite in Docker
-   with a budget per step.
-5. **The suite's own model calls** use `claude-haiku-5-5`
+   steps. For each step it wrote a Dev prompt and ran a Dev agent, then
+   wrote a QA prompt and ran a QA agent that checked the Dev's work and
+   reported findings by severity. Each QA's findings went into the next Dev
+   prompt ("Fix first").
+5. **Repo review and fix rounds.** After the build, a hiring-panel review
+   prompt ran on the repo, twice. After each review, a repo-fix prompt was
+   given to a new session, which ran Dev and QA agents in parallel units
+   (rows 38 and 39).
+6. **The suite's own model calls** use `claude-haiku-5-5`
    (`harness/constants.py`, `MODEL_ID`), with `--max-turns 4` and
    `--max-budget-usd 0.25` per run.
-6. **The candidate's own messages** to these sessions are listed
-   verbatim in [The candidate's own prompts](#the-candidates-own-prompts)
-   below. Most are short steering lines; they are all the candidate typed
-   into these sessions.
 
 ## Who wrote what
 
 - **Build prompts 01 to 19 were written by the orchestrating agent**, not
-  by the candidate. The candidate wrote none of their text. The
-  candidate's part in the build is the messages listed below.
-- **Decisions that were the candidate's:**
+  by the candidate. The candidate wrote none of the code and none of their
+  text.
+- **Decisions that were the candidate's** (the chat messages behind them
+  are in [The candidate's messages](#the-candidates-messages)):
   - The plan: its structure (one doc per topic, docs 11 to 23, every idea
-    tagged P0/P1/P2, doc 24 as the handoff) and the plan-review prompt
-    that was run 5 times on it.
-  - The Dev/QA loop: two agents, Dev then QA, step by step (session 3,
-    10-17 00:07).
-  - The scope cuts: doc 24 cut the build to 10 items, with question 2 and
-    question 3 in depth.
-  - The spend cap: "spend 20$ if you need, but try not to be a spender"
-    (session 3, 10-17 00:58). The suite's own cap, `SUITE_BUDGET_USD`
+    tagged P0/P1/P2, doc 24 as the handoff) and the plan-review prompt.
+  - The Dev/QA loop (10-17 00:07).
+  - The scope cut: doc 24 cut the build to 10 items, with question 2 and
+    question 3 in depth. Written in the plan docs, not in a chat message.
+  - The spend cap (10-17 00:58). The suite's own cap, `SUITE_BUDGET_USD`
     $5.00, sits inside it.
   - The no-defaults rule: no default parameter values, every argument
     passed by keyword, values as named constants. It comes from the
     candidate's global Claude Code instructions, which every session
     loaded, not from a chat message.
-  - The logging rule: every action, returned status and wait is logged,
-    and every assert reads `Expected: ... Actual: ...` (session 3, 10-17
-    12:01 and 12:16). Build prompts 17 to 19 turned it into code.
+  - The logging rule (10-17 12:01 and 12:16). Build prompts 17 to 19
+    turned it into code (`harness/check.py`).
+  - The hiring-panel review of the repo (10-17 13:13).
 - **Written by agents:** the code, the build prompts, and the first
   drafts of README.md, PLAN.md and this file (build step 7).
 
@@ -66,7 +56,7 @@ transcripts.
 
 | # | File | To whom | Purpose |
 |---|---|---|---|
-| 1 | `prompts/plan/00_START_HERE_—_read_this_first.md` | planning agent | Reading order for the plan folder; do not start before reading all of it |
+| 1 | `prompts/plan/00_START_HERE_—_read_this_first.md` | planning agent | Reading order for the plan folder |
 | 2 | `prompts/plan/11_Harness_and_Pinned_Config_—_MCP_Client.md` | planning agent | Harness: pinned version, env, flags, fake server, gate, known-defect rule, cost cap |
 | 3 | `prompts/plan/12_Connection_and_Handshake_—_MCP_Client.md` | planning agent | Question 1: handshake, era probe, status strings (9 ideas) |
 | 4 | `prompts/plan/13_Auth_and_Remote_Transport_—_MCP_Client.md` | planning agent | Question 1: auth, headers, credential variables, remote transport (11 ideas + 1 merged) |
@@ -101,19 +91,20 @@ transcripts.
 | 33 | `prompts/15-dev-step7-docs.md` | Dev | Step 7: step 6 fixes, PLAN.md, README.md, PROMPTS.md, repo hygiene |
 | 34 | `prompts/16-qa-step7-final.md` | QA | Final check as the reviewer: fresh-clone run, docs vs code |
 | 35 | `prompts/17-dev-step8-test-logs-and-asserts.md` | Dev | Step 8: every test logs its actions, waits and results; every assert in Expected/Actual form (`harness/check.py`) |
-| 36 | `prompts/18-qa-step8-test-logs-and-asserts.md` | QA | Check of step 8: the logs, the Expected/Actual messages, same outcomes, no secret in the logs |
-| 37 | `prompts/19-dev-step8b-log-fixes.md` | Dev | Fix the step 8 QA findings: less log noise, the last asserts in Expected/Actual form, missing step lines |
-| 38 | `mcp-repo-fix-prompt.md` (kept outside the repo) | orchestrating agent | Apply the fixes of the hiring-panel repo review: run-level gate, secret handling, findings wording, the candidate's own prompts, the time spent. Given by the candidate to a new Claude Code session, which ran a Dev and a QA agent per wave |
+| 36 | `prompts/18-qa-step8-test-logs-and-asserts.md` | QA | Check step 8: the logs, the Expected/Actual messages, no secret in the logs |
+| 37 | `prompts/19-dev-step8b-log-fixes.md` | Dev | Fix the step 8 QA findings |
+| 38 | `mcp-repo-review-prompt.md` (kept outside the repo) | reviewer | Hiring-panel review of the repo: a panel of experts scores it and ranks the fixes. Run twice, on 2026-10-17 |
+| 39 | `mcp-repo-fix-prompt.md` (kept outside the repo) | orchestrating agent | Apply the fixes of the newest repo review. Given to a new Claude Code session after each review (twice: after review 1 and after review 2); each run used Dev and QA agents in parallel units |
 
 R02 to R05 were given to the planning agent too, but they are copies of public
 spec pages, so they are listed here and not copied:
 
-| File (in the plan folder) | Title | Source |
-|---|---|---|
-| `Documentation/R02_MCP_Spec_2025-11-25_—_Lifecycle.md` | MCP Specification 2025-11-25: Lifecycle | https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle |
-| `Documentation/R03_MCP_Spec_2025-11-25_—_Cancellation.md` | MCP Specification 2025-11-25: Cancellation | https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/cancellation |
-| `Documentation/R04_MCP_Spec_2025-11-25_—_Transports_(stdio,_Streamable_HTTP).md` | MCP Specification 2025-11-25: Transports | https://modelcontextprotocol.io/specification/2025-11-25/basic/transports |
-| `Documentation/R05_MCP_Spec_2026-07-28_—_Versioning_and_Compatibility.md` | MCP Specification (latest, revision 2026-07-28): Versioning and Compatibility | https://modelcontextprotocol.io/specification/latest/basic/lifecycle |
+| File (in the plan folder) | Source |
+|---|---|
+| `Documentation/R02_MCP_Spec_2025-11-25_—_Lifecycle.md` | https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle |
+| `Documentation/R03_MCP_Spec_2025-11-25_—_Cancellation.md` | https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/cancellation |
+| `Documentation/R04_MCP_Spec_2025-11-25_—_Transports_(stdio,_Streamable_HTTP).md` | https://modelcontextprotocol.io/specification/2025-11-25/basic/transports |
+| `Documentation/R05_MCP_Spec_2026-07-28_—_Versioning_and_Compatibility.md` | https://modelcontextprotocol.io/specification/latest/basic/lifecycle |
 
 ## Launcher text
 
@@ -126,194 +117,59 @@ file (N = the step, `<path>` = the file):
 - QA: ``You are the QA agent for step N. Your full task is in this file; read it in full first and follow it exactly: <path>. Do not edit that file or any other file under `mcp-client-suite/`.``
 
 Between steps, the orchestrating session pasted each QA finding into the
-next Dev prompt as a "Fix first" section, and each Dev report's claims
-into the next QA prompt as "Dev's claims". Those edits are in the prompt
-files as sent.
+next Dev prompt ("Fix first") and each Dev report's claims into the next
+QA prompt ("Dev's claims"); the prompt files are as sent.
 
 ## What was checked before copying
 
 Every copied file (docs 00, 11 to 24, R01, R06, the review prompt) and
 every build prompt was searched for `sk-ant`, `Bearer ` followed by a
 value, the word "token" and e-mail addresses. No secret and no e-mail
-address was found. The hits are the word "token" in its normal sense
-(model tokens, OAuth token refresh) and the `sk-ant` pattern named in
-prompt 15's own instructions. Absolute home paths (`/Users/islootski/...`)
-stay as they were.
+address was found; the hits are "token" in its normal sense and the
+`sk-ant` pattern named in prompt 15's own instructions.
 
-## The candidate's own prompts
+## The candidate's messages
 
-Every chat message the candidate typed into the Claude Code sessions of
-this work, verbatim, typos kept, in order. Taken from the session
-transcripts: user messages with plain text only. Left out: tool results,
-system and command blocks, agent hand-backs, and the summaries Claude
-Code writes when a session is compacted (none of these were typed by the
-candidate). Changes: one message held the API key and is dropped; one
-work e-mail address is removed; one pasted `run.json` is replaced by a
-note. A few messages are about another project that ran in parallel
-(`itbr`); they are kept, since they are part of the same sessions. The
-plan docs 00 and 11 to 24 were written and revised outside these Claude
-Code sessions (session 2 shows the review fixes being copied out "to
-claude"); those chats are not listed. The docs as used are in
-`prompts/plan/`. This repo-fix session (row 38) is not listed here.
+The chat messages in which the candidate made a decision, taken from the
+session transcripts. Each is paraphrased: spelling fixed, meaning kept. Times are local (UTC+3). The plan docs were written and
+revised outside these sessions; those chats are not listed.
 
-### Session 1: Plan review, round 1
+### Session 1: plan review, round 1
 
-Claude Code session `890dc2e7`, 2026-10-16 17:51 to 2026-10-16 17:51 (local time, UTC+3), 1 message(s).
+Claude Code session `890dc2e7`, 2026-10-16 17:51 to 2026-10-16 17:51, 1
+message: the line that runs the plan-review prompt on the plan folder.
 
-- 10-16 17:51: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
+### Session 2: plan reviews, rounds 2 to 5, and the docx-to-md conversion
 
-### Session 2: Plan reviews, rounds 2 to 5, and the docx-to-md conversion of the plan
+Claude Code session `e231d4fc`, 2026-10-16 17:55 to 2026-10-16 21:46, 17
+messages: the same review line at 17:55, 19:56 and 21:29, and short
+requests for fix prompts, file paths and the conversion of the plan docs
+from docx to md.
 
-Claude Code session `e231d4fc`, 2026-10-16 17:55 to 2026-10-16 21:46 (local time, UTC+3), 17 message(s).
+### Session 3: the build
 
-- 10-16 17:55: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
-- 10-16 18:34: `how to run the fix revew?`
-- 10-16 18:35: `copy to clip ill past to claude`
-- 10-16 18:36: `print the revwe in short points to screen`
-- 10-16 19:04: `copy step 2 to clip`
-- 10-16 19:56: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
-- 10-16 20:11: `copy to clip promt for claude to fix the revew demends`
-- 10-16 21:01: `did you run the verefication`
-- 10-16 21:29: `Read prompts/mcp-plan-review-prompt.md. Follow everything below its first --- line. Inputs: PLAN = ~/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/ ; REPO = empty ; OUT = the default.`
-- 10-16 21:34: `how critical thery are`
-- 10-16 21:35: `give me the the link to the documents`
-- 10-16 21:35: `paht`
-- 10-16 21:36: `what is the test plan to implement`
-- 10-16 21:38: `full paht to #1`
-- 10-16 21:39: `would it easer to cluade to read docx or md file?`
-- 10-16 21:39: `convert the docx files to md and rplace the spaces to _`
-- 10-16 21:46: `where are the new md file`
+Claude Code session `b8db9188`, 2026-10-17 00:05 to 2026-10-17 14:13, 73
+messages. This session wrote build prompts 01 to 19 and ran the Dev and
+QA agents.
 
-### Session 3: The build: the orchestrating session that wrote build prompts 01-19 and ran the Dev and QA agents
+- 00:07 (paraphrased): "I am thinking of two agents, QA and Dev. They
+  work through the plan docs in a loop: when one doc is done, go to the
+  next one. Recommend what I should do. Don't assume; check."
+- 00:58 (paraphrased): "Spend $20 if you need, but try not to be a
+  spender; use the money wisely."
+- 12:01 (paraphrased): "The log format should look like this:
+  `11:58:01.34 2026-10-17 [DEBUG   ] runner.py:42 connect() - Connecting to server`"
+- 12:16 (paraphrased): "The rule for logs: each test action has a log
+  line. Each returned status has a log line. When you wait, log 'start
+  waiting for <command>', and when the wait is done, 'waiting done, the
+  response is ...'. The test tells what it did and what it got back for
+  its request. Each assert explains itself: Expected: ... Actual: ..."
+- 13:13 (paraphrased): "Look at the project; it is my home assignment for
+  an interview. Collect the experts a reviewer needs and review it. The
+  interview is for a senior automation engineer, the first hire and the
+  future manager of the team. Improve the prompt; ask questions." This
+  became the repo-review prompt (row 38).
 
-Claude Code session `b8db9188`, 2026-10-17 00:05 to 2026-10-17 14:13 (local time, UTC+3), 73 message(s).
-
-- 10-17 00:05:
-
-  ```text
-   i have a task for hoem assiment
-  ```
-- 10-17 00:07:
-
-  ```text
-  i thing of 2 agents - qa and dev
-  and tye will run in documentation in loop - ones dock is finish 
-  going to next one
-  
-  This is the home assimet:
-  /Users/islootski/Documents/02-Personal/mcp-client-testing/MCP-Client-Testing/
-  
-  please recomed what should id do.
-  dont assume check
-  ```
-- 10-17 00:10: `list what you need me to install`
-- 10-17 00:14: `check if you missing somthing to install?`
-- 10-17 00:26: `check now`
-- 10-17 00:27: `check now, i allow you to compoit what is missing`
-- 10-17 00:28: `skip the login to github for now`
-- 10-17 00:30: `go`
-- 10-17 00:31: `use the api key for itbr from my_itbr`
-- 10-17 00:34:
-
-  ```text
-  what key you need?
-  where can i find it?
-  ```
-- 10-17 00:35: `can you get do it for me from ?`
-- 10-17 00:37: `look on the screen now, what should i do?`
-- 10-17 00:42: `look at my screen`
-- 10-17 00:42: `what now?`
-- 10-17 00:46: `look right now, what you see with the auto reload`
-- 10-17 00:47: `no`
-- 10-17 00:47: `now`
-- 10-17 00:51: *[dropped: this message held the API key]*
-- 10-17 00:51: `what to do now`
-- 10-17 00:54: `look at the key`
-- 10-17 00:54: `now the key is in`
-- 10-17 00:54: `now the key is in ~/.config/bay-mcp/key`
-- 10-17 00:56: `is there anything you need? can i go sleep?`
-- 10-17 00:56: `go on without me`
-- 10-17 00:58:
-
-  ```text
-  spend 20$ if you need, but try not to be a spender - use the money wizly
-  good night
-  ```
-- 10-17 09:16: `go on - dont stop for qastions`
-- 10-17 11:43: `how much did we spend so far`
-- 10-17 11:44: `how much time left?`
-- 10-17 11:45: `how much time left?`
-- 10-17 11:46: `what are you doing in one line>?`
-- 10-17 11:46: `what are you working on?`
-- 10-17 11:47: `i need to creat repor for my assing did you created it?`
-- 10-17 11:47: `did you generated the code?`
-- 10-17 11:48: `are you using pytest?`
-- 10-17 11:48: `run all test show me pytest html report`
-- 10-17 11:52: `when done ipen it`
-- 10-17 11:55: `i open passed test what i see is No log output captured.`
-- 10-17 11:56: `does the has logger - he pytest project ?`
-- 10-17 12:01: `log format should look like that: 11:58:01.34 2026-10-17 [DEBUG   ] runner.py:42 connect() - Connecting to server`
-- 10-17 12:16:
-
-  ```text
-  the rool for logs is the followng:
-  each test  action should have log 
-  each status return staus should have log
-  when you wait  - log like start waitiong for ...command..   when the waiting is done -> waiting doen the responce is...
-  the genaral idia is that the test tell what did he did and what did it recive for his requast
-  the assertion should be self explanagle like Expected:... Acutioal
-  ```
-- 10-17 12:35: `is anygihg running?`
-- 10-17 12:35: `how much left?`
-- 10-17 12:35: `can you parallize the work?`
-- 10-17 12:39: `go on`
-- 10-17 12:42: `give status`
-- 10-17 12:47: `what is done`
-- 10-17 12:49: `what is running¿`
-- 10-17 12:50: `you are working on home assingmet or itbr?`
-- 10-17 12:50: *[a pasted `run.json` from one test's artifacts with the question "what does this big json mand:"; the JSON is omitted]*
-- 10-17 12:52: `1`
-- 10-17 12:53: `give me a path to python project`
-- 10-17 12:53: `full`
-- 10-17 12:57: `can you open ?`
-- 10-17 12:58: `run git init and add gitigrnore with all relevat parts`
-- 10-17 12:59: `create fist commit with "Good luch!!!" mesate`
-- 10-17 13:01: `i need you to push it to gihub mail iliasltski@gmail.com`
-- 10-17 13:04:
-
-  ```text
-  i told you once:
-  this is my work mac so mainly must work with [work e-mail address removed]
-  in the back ground it should have the option to work with my gmail as well and you set it to work
-  check convrsations
-  ```
-- 10-17 13:05: `check with it`
-- 10-17 13:06: `done`
-- 10-17 13:07: `ok`
-- 10-17 13:13:
-
-  ```text
-  i need you to look at the project, it is my homeassinmet for intervew.
-  i need you to go over project collect experteeds you need to do a  revewer 
-  it is intervew for automation senior engenneer, fist man an futur manage of the team
-  
-  imporve the pormt 
-  ask qastions
-  ```
-- 10-17 13:16: `make it so it will run from vanila claude`
-- 10-17 13:18: `is it ready?`
-- 10-17 13:21: `how much left?`
-- 10-17 13:45: `does the score followied with revew?`
-- 10-17 13:47: `what is the best way to run the revew fix?`
-- 10-17 14:10: `give me cmd to clip to run ther revew fixes`
-- 10-17 14:10: `will vanila claude know how to do that?`
-- 10-17 14:11: `-`
-- 10-17 14:11:
-
-  ```text
-  ⏺ The P2 screen QA is still in its long browser test run, so I'm waiting on four screen QA agents (P2, P3, P5, P6a). All develop
-  quote>
-  ```
-- 10-17 14:12: `no session strted - give me full cmd`
-- 10-17 14:12: `give me to clip full cmd that starts with cd ...`
-- 10-17 14:13: `how much time it sould run?`
+The other 82 messages of the three sessions were short steering and
+status lines (what is running, how much was spent, open the report, set
+up git); they are not listed.
