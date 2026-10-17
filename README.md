@@ -109,10 +109,10 @@ Measured on an Apple silicon Mac with Docker Desktop, image layers cached.
 **Time spent.** Longer than the 2-3 h box. About 7 h of session time by
 the PROMPTS.md timestamps (10-16 17:55-21:46; 10-17 00:05-00:58,
 11:43-13:21, 13:45-14:13), not all hands-on: review agents ran while the
-candidate steered. Plus the plan, written on 10-14 to 10-16: [candidate:
-add plan hours] (not timed; an estimate). Not counted: the agents' build
-overnight and the fix rounds after the panel reviews, each run from one
-prompt. The extra time went into proving the checks can fail.
+candidate steered. Plus writing the plan on 10-14 to 10-16, which was
+not timed. Not counted: the agents' build overnight and the fix rounds
+after the panel reviews, each run from one prompt. The extra time went
+into proving the checks can fail.
 
 A 3-hour cut would have kept: the two fake servers and the wire-log
 oracle, the round trip, the right tool among two near-duplicates, and a
@@ -201,9 +201,9 @@ and the log format: [docs/log-format.md](docs/log-format.md).
 - **Permissions and MCP policy.** Tested: hook `deny`, `ask` and `allow`
   (`ask` and `deny` both stop the call; only `ask` adds a
   `permission_denied` event, headless.md:333), allow and deny rules, and
-  user-scope `deniedMcpServers` / `allowedMcpServers` on `--mcp-config`
-  servers (`test_mcp_server_policy_in_user_settings[denied]` and
-  `[allowed_only]`; managed-mcp.md:250, :260). Not tested: Ask permission
+  `deniedMcpServers` / `allowedMcpServers` given in inline `--settings`, on
+  `--mcp-config` servers (`test_mcp_server_policy_in_user_settings[denied]`
+  and `[allowed_only]`; managed-mcp.md:251, :259). Not tested: Ask permission
   rules, an Ask host (`--permission-prompt-tool`), and `managed-mcp.json`,
   the first next item. Only `managed-mcp.json` needs its own container: a
   deployed one makes every `--mcp-config` run exit (managed-mcp.md:105).
