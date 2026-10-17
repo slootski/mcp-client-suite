@@ -21,7 +21,8 @@
 #
 # Artifacts: each run gets a fresh folder ./artifacts/<run-id>/ (junit.xml, cost.json,
 # secret-scan.json, per-test run.json, wire logs, command transcripts), and
-# ./artifacts/latest is a plain file holding the newest complete <run-id>.
+# ./artifacts/latest is a plain file holding the newest complete <run-id>
+# that ran at least one test.
 # Nothing is bind-mounted: the container writes inside itself and this
 # script copies the result out with `docker cp` once it exits. (A bind mount
 # of a just-created host folder fails intermittently on Docker Desktop, and
@@ -129,11 +130,17 @@ mkdir -p artifacts
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$SUITE_DIR/artifacts/$RUN_ID"
 mkdir "$RUN_DIR"
-# `latest` moves only to a complete run: secret-scan.json is written by the
-# entrypoint after pytest, so a run without it (entrypoint crash, failed
-# copy) keeps its folder for debugging but does not become `latest`.
+# `latest` moves only to a complete run that ran a test: secret-scan.json is
+# written by the entrypoint after pytest, and junit.xml must hold a
+# <testcase. Any other run keeps its folder for debugging but does not become
+# `latest`. A failed copy or a missing scan turns exit 0 into 1; a run with
+# no test (exit 14, exit 5, --collect-only) keeps its own exit code.
 if docker cp "$CID:$CONTAINER_OUT/." "$RUN_DIR/" && [ -f "$RUN_DIR/secret-scan.json" ]; then
-  printf '%s\n' "$RUN_ID" > artifacts/latest
+  if grep -q '<testcase' "$RUN_DIR/junit.xml" 2>/dev/null; then
+    printf '%s\n' "$RUN_ID" > artifacts/latest
+  else
+    echo "run.sh: no test ran (junit.xml missing or holds no <testcase); artifacts/latest not updated" >&2
+  fi
 else
   echo "run.sh: no complete artifacts (copy failed or no secret-scan.json); artifacts/latest not updated" >&2
   if [ "$rc" -eq 0 ]; then rc=1; fi
