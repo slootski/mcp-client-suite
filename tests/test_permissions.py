@@ -92,7 +92,7 @@ LIST_ONLY = mcp_tool_name(server=GUARD, tool=LIST)
 # hook_action None: the hook must not run. delete_reaches_server False: no
 # tools/call for delete_all, one error tool_result for its tool_use.
 # denied_events: `permission_denied` system events per delete_all tool_use
-# (headless.md:333; 2.1.296 sends one for ask only).
+# (headless.md:333; of the T9 cases, 2.1.296 sends one for ask only).
 T9_CASES = {
     # deny and ask: the reason is in the tool_result (hooks.md:1934; for ask
     # because nobody can answer the prompt in `-p`).
@@ -116,7 +116,7 @@ T9_CASES = {
                                "handler_fields": {"onFailure": "block"}, "allowed_tools": GUARD_ALL,
                                "hook_action": ACTION_EXIT1, "delete_reaches_server": False, "denied_events": 0},
 }
-# MCP server policy in inline `--settings` (settings-reference.md:4967: refused "wherever it's defined, including
+# MCP server policy in inline `--settings` (settings.md:566: it sets any user-settings key; settings-reference.md:4967: refused "wherever it's defined, including
 # ... servers passed with `--mcp-config`"; :4969 and managed-mcp.md:259: lists from every scope merge;
 # managed-mcp.md:251: `--strict-mcp-config` "doesn't bypass either list").
 POLICIES = {"denied": {"deniedMcpServers": [{"serverName": OPS}]},

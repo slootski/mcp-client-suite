@@ -930,7 +930,7 @@ def test_permission_mutation_fails(free_sandbox, request, monkeypatch, mutation_
 
 
 # fakes/guard_hook.py on its own (fakes/ cannot be imported, so its values are restated here).
-HOOK_EXIT_OK = 0  # fakes/guard_hook.py: sys.exit(0) after pass, deny or ask
+HOOK_EXIT_OK = 0  # fakes/guard_hook.py: sys.exit(0) after pass, deny, ask or allow
 HOOK_EXIT_FAIL = 1  # fakes/guard_hook.py FAIL_EXIT_CODE (mode fail)
 DECISION_DENY = "deny"  # hooks.md:1933: the permissionDecision values
 DECISION_ASK = "ask"
