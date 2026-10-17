@@ -1,91 +1,18 @@
-"""D23/T9 (PreToolUse hook deny) and D23/T10 (deny and allow rules, and
-the `__` scoping of server-level rules).
+"""D23/T9 (PreToolUse hook) and D23/T10 (permission rules) on MCP tools.
 
-Model tier: needs ANTHROPIC_API_KEY, costs tokens (skipped without a key).
-One run per item (not repeated): the facts are permission decisions of the
-client, and the model only has to make the calls (the S trigger).
+Model tier: needs ANTHROPIC_API_KEY, costs tokens (skipped without a key);
+one run per item. Servers (stdio fake, legacy era, tool search off):
+`guard` (list_items, delete_all) and `guard__ops` (rotate_logs). Every tool
+logs `tool_executed`, so "the server never saw the call" is read from the
+fake's own log. Every run passes `--permission-prompts none`
+(harness/model_run.py).
 
-Servers (stdio fake, legacy era, tool search off):
-  `guard`       toolset guard: list_items(prefix), delete_all(reason).
-  `guard__ops`  toolset ops: rotate_logs(service) (T10 variants A and B).
-Every tool of these toolsets logs `tool_executed`, so "the server never
-saw the call" is read from the fake's own log (no `tools/call` `recv`).
-
-D23/T9: `--settings '<inline JSON>'` registers one PreToolUse command hook
-(fakes/guard_hook.py). It logs every input it gets with the action it took,
-passes every tool except mcp__guard__delete_all, and for that one either
-denies it (permissionDecision "deny" with a fresh reason token) or exits 1.
-`--allowedTools "mcp__guard__*"` (doc 11) allows both tools by rule, so
-only the hook can stop delete_all. The prompt asks for list_items, then
-delete_all. Both tool_uses are the S trigger.
-  gate  list_items reached the server before the delete_all tool_use (the
-        server works and the hook lets other tools through), else the item
-        is skipped as inconclusive.
-  D     list_items: one tools/call per tool_use, arguments == input,
-        tool_result == the fake's text (d_passthrough).
-  Cases (hooks.md):
-  deny                   matcher `mcp__guard__.*`. D: no tools/call for
-                         delete_all; its tool_use got one tool_result,
-                         is_error true, holding the reason token (the
-                         reason is shown to Claude, hooks.md:1934); the
-                         hook log has one "deny" line for that tool_use id
-                         and a "pass" line for list_items.
-  matcher_without_wildcard  matcher `mcp__guard` (no `.*`). hooks.md:365:
-                         such a matcher "is compared as an exact string and
-                         matches no tool". D: the hook log is empty, and
-                         delete_all reached the server (allowed by rule).
-  exit1_default          matcher `mcp__guard__.*`, the hook exits 1 for
-                         delete_all, no `onFailure`. hooks.md:786: a
-                         non-blocking error, "The action goes ahead". D:
-                         the hook ran for it ("exit1" line) and delete_all
-                         reached the server.
-  exit1_on_failure_block the same with `"onFailure": "block"` (hooks.md:904,
-                         changelog.md:480, v2.1.295+). D: the hook ran for
-                         it; no tools/call for delete_all; its tool_result
-                         is an error (text recorded).
-  Recorded: tool_result texts, result.permission_denials, system events.
-
-D23/T10: permission rules, no hook.
-  deny_rule    servers {guard}; `--allowedTools "mcp__guard__*"` and
-               `--disallowedTools "mcp__guard__delete_all"`. Prompt: list_items,
-               then delete_all. Trigger: list_items. D: list_items passes
-               through (d_passthrough); no tools/call for delete_all.
-               Conclusive only when delete_all is absent from system/init
-               tools (cli-reference.md:87: a bare tool name "removes the
-               matching tools from Claude's context") or a delete_all
-               tool_use exists; else inconclusive. Recorded: which of the
-               two, and whether it is in result.permission_denials.
-  no_rule      (control for variant A) servers {guard, guard__ops};
-               `--allowedTools "mcp__guard__list_items"` only. Prompt:
-               list_items, then mcp__guard__ops__rotate_logs. Trigger: both
-               tool_uses; gate: list_items reached guard first. D: no
-               tools/call reaches guard__ops; the rotate_logs tool_use got one
-               error tool_result; result.permission_denials lists it, and a
-               `permission_denied` system event names it (tool_name,
-               tool_use_id), as headless.md:333 says for a request that would
-               prompt under `--permission-prompts none`. So "a tool no rule
-               allows is denied", which variant A assumes, is checked.
-  allow_scope  (variant A) servers {guard, guard__ops}; `--allowedTools
-               "mcp__guard"` only, so a call that reaches guard__ops can only
-               come from the `mcp__guard` rule. Prompt: list_items, then
-               mcp__guard__ops__rotate_logs. Trigger: both tool_uses. D:
-               list_items reaches guard (the `mcp__guard` rule is in effect,
-               permissions.md:550). Known defect, strict xfail: no tools/call
-               reaches guard__ops. changelog.md:212, fixed in 2.1.299:
-               "`mcp__a` no longer allows a server named `a__b`".
-  deny_scope   (variant B) servers {guard, guard__ops}; `--allowedTools
-               "mcp__guard__ops__*"` and `--disallowedTools "mcp__guard__ops"`
-               (a server-level deny). Prompt: rotate_logs. Trigger:
-               rotate_logs. Known defect, strict xfail: no tools/call reaches
-               guard__ops. changelog.md:297, fixed in 2.1.299: "Fixed deny
-               and ask rules for an MCP server (`mcp__<server>`) not applying
-               when the server's normalized name contains a double
-               underscore". When the deny works, rotate_logs is expected to
-               be absent from system/init tools: that counts as conclusive
-               (the flow then reports "no tool_use", which is not a miss).
-  The two variants are split (plan review 5, fix 1) so that on 2.1.299 each
-  flip proves its own fix: in A no deny rule exists, in B the allow rule
-  covers guard__ops, so only the deny can stop the call.
+T9: fakes/guard_hook.py through `--settings`, `--allowedTools "mcp__guard__*"`;
+cases deny, ask, matcher_without_wildcard, exit1_default, exit1_on_failure_block.
+T10: deny rule, no-allow-rule control, variant A (allow scope) and variant B
+(deny scope), A and B strict xfails for 2.1.296 defects. Detail: PLAN.md
+D23/T9 and D23/T10; retries and inconclusive items: docs/flake-policy.md;
+offline replays: tests/test_harness_offline.py.
 """
 
 import os
@@ -148,18 +75,29 @@ PRE_TOOL_USE = "PreToolUse"
 ACTION_PASS = "pass"
 ACTION_DENY = "deny"
 ACTION_EXIT1 = "exit1"
+ACTION_ASK = "ask"
 HOOK_MODE_DENY = "deny"
+HOOK_MODE_ASK = "ask"
 HOOK_MODE_FAIL = "fail"
 INIT_SUBTYPE = "init"
 PERMISSION_DENIED_SUBTYPE = "permission_denied"
 
+# hook_action None: the hook must not run. delete_reaches_server False: no
+# tools/call for delete_all, one error tool_result for its tool_use.
 T9_CASES = {
+    # deny and ask: the reason is in the tool_result (hooks.md:1934; for ask
+    # because nobody can answer the prompt in `-p`).
     "deny": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_DENY, "handler_fields": {},
              "hook_action": ACTION_DENY, "delete_reaches_server": False},
+    "ask": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_ASK, "handler_fields": {},
+            "hook_action": ACTION_ASK, "delete_reaches_server": False},
+    # hooks.md:365: a matcher with no `.*` "is compared as an exact string and matches no tool".
     "matcher_without_wildcard": {"matcher": "mcp__guard", "mode": HOOK_MODE_DENY, "handler_fields": {},
                                  "hook_action": None, "delete_reaches_server": True},
+    # hooks.md:786: exit 1 is a non-blocking error, "The action goes ahead".
     "exit1_default": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_FAIL, "handler_fields": {},
                       "hook_action": ACTION_EXIT1, "delete_reaches_server": True},
+    # hooks.md:904, changelog.md:480 (v2.1.295+): `"onFailure": "block"` blocks the call.
     "exit1_on_failure_block": {"matcher": "mcp__guard__.*", "mode": HOOK_MODE_FAIL,
                                "handler_fields": {"onFailure": "block"},
                                "hook_action": ACTION_EXIT1, "delete_reaches_server": False},
@@ -330,6 +268,9 @@ def run_hook_guard(*, sandbox, ledger, request, case_id, reason, deny_reason):
     sandbox.record.observe(key="d_view", value=view)
     got(what="hook log (tool, action)", value=[(e["tool_name"], e["action"]) for e in view["hook_log"]])
     got(what="delete_all tools/call that reached guard", value=len(delete_calls))
+    # Recorded only (headless.md:333); the ask shape of these is not asserted.
+    got(what="result.permission_denials, `permission_denied` events", value=(
+        view["denials"]["permission_denials"], permission_denied_events(stream=stream)))
     expect_equal(what="hook_event_name of every hook log line", expected=[PRE_TOOL_USE] * len(entries),
                  actual=[e["input"]["hook_event_name"] for e in entries])
 
@@ -356,7 +297,7 @@ def run_hook_guard(*, sandbox, ledger, request, case_id, reason, deny_reason):
                     actual="delete_all reached the server %d time(s) although the hook stopped it" % len(delete_calls)
                     if delete_calls else "none", holds=not delete_calls)
         assert_denied_results(stream=stream, name=delete_name)
-        if case["hook_action"] == ACTION_DENY:
+        if case["hook_action"] in (ACTION_DENY, ACTION_ASK):
             for row in view["delete_all"]:
                 expect_true(what="the hook's permissionDecisionReason in the denied tool_result (hooks.md:1934)",
                             expected="contains %s" % deny_reason, actual=row["tool_results"][0]["text"],
@@ -366,13 +307,17 @@ def run_hook_guard(*, sandbox, ledger, request, case_id, reason, deny_reason):
 # ---------------------------------------------------------------- D23/T10
 def test_deny_rule_keeps_call_from_server(model_sandbox, cost_ledger, request):
     """T10 base: a deny rule for one tool, the allow rule for the rest."""
-    reason = token(prefix=CLEANUP_PREFIX)
+    run_deny_rule(sandbox=model_sandbox, ledger=cost_ledger, request=request, reason=token(prefix=CLEANUP_PREFIX))
+
+
+def run_deny_rule(*, sandbox, ledger, request, reason):
+    """The T10 base body (the test above; tests/test_harness_offline.py replays it)."""
     list_name = mcp_tool_name(server=GUARD, tool=LIST)
     delete_name = mcp_tool_name(server=GUARD, tool=DELETE)
     step(text="server guard; --allowedTools %s, %s %s; prompt: %s, then %s" % (
         allowed_tools_for(servers=[GUARD]), DISALLOWED_TOOLS_FLAG, delete_name, list_name, delete_name))
     triggered = run_flow(
-        sandbox=model_sandbox, ledger=cost_ledger, request=request, names=[GUARD],
+        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD],
         allowed_tools=allowed_tools_for(servers=[GUARD]),
         prompt=PROMPT_LIST_THEN_DELETE.format(list=list_name, prefix=LIST_PREFIX, delete=delete_name, reason=reason),
         trigger_names=[list_name], require_all_triggers=False,
@@ -394,33 +339,38 @@ def test_deny_rule_keeps_call_from_server(model_sandbox, cost_ledger, request):
         "denials": denials,
         "result": result_summary(stream=stream),
     }
-    model_sandbox.record.observe(key="d_view", value=view)
+    sandbox.record.observe(key="d_view", value=view)
     assert_tool_search_tool(stream=stream, expected=False)
     assert_tools_advertised(stream=stream, names=[list_name])
     view["list_passthrough"] = d_passthrough(stream=stream, records=records, server=GUARD, tool=LIST)
-    model_sandbox.record.observe(key="d_view", value=view)
+    sandbox.record.observe(key="d_view", value=view)
     got(what="delete_all in system/init tools, delete_all tool_uses, in permission_denials", value=(
         view["delete_all_in_init_tools"], len(view["delete_all"]), view["delete_all_in_permission_denials"]))
+    # cli-reference.md:87: a bare tool name in --disallowedTools "removes the
+    # matching tools from Claude's context".
+    expect_equal(what="%s in system/init tools under %s %s (cli-reference.md:87: removed from Claude's context)"
+                 % (delete_name, DISALLOWED_TOOLS_FLAG, delete_name), expected=False,
+                 actual=view["delete_all_in_init_tools"])
     expect_equal(what="delete_all tools/call that reached the server despite the deny rule", expected=0,
                  actual=len(delete_calls))
     assert_denied_results(stream=stream, name=delete_name)
-    if view["delete_all_in_init_tools"] and not view["delete_all"]:
-        step(text="skip as inconclusive: %s offered in system/init and never called" % delete_name)
-        pytest.skip("inconclusive: %s is offered in system/init and the model made no tool_use for it" % delete_name)
 
 
 def test_tool_without_allow_rule_is_denied(model_sandbox, cost_ledger, request):
     """T10 control for variant A: with no rule that allows it, an MCP tool is
     denied in `-p` (headless.md:323, 333). Variant A rests on this."""
-    sandbox = model_sandbox
-    service = token(prefix=SERVICE_PREFIX)
+    run_no_rule(sandbox=model_sandbox, ledger=cost_ledger, request=request, service=token(prefix=SERVICE_PREFIX))
+
+
+def run_no_rule(*, sandbox, ledger, request, service):
+    """The T10 control body (the test above; tests/test_harness_offline.py replays it)."""
     list_name = mcp_tool_name(server=GUARD, tool=LIST)
     rotate_name = mcp_tool_name(server=OPS, tool=ROTATE)
     allow_rule = list_name
     step(text="servers guard and guard__ops; --allowedTools %r only; prompt: %s, then %s" % (
         allow_rule, list_name, rotate_name))
     triggered = run_flow(
-        sandbox=sandbox, ledger=cost_ledger, request=request, names=[GUARD, OPS], allowed_tools=allow_rule,
+        sandbox=sandbox, ledger=ledger, request=request, names=[GUARD, OPS], allowed_tools=allow_rule,
         prompt=PROMPT_LIST_THEN_ROTATE.format(list=list_name, prefix=LIST_PREFIX, rotate=rotate_name,
                                               service=service),
         trigger_names=[list_name, rotate_name], require_all_triggers=True, extra_args=[],

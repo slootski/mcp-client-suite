@@ -57,12 +57,20 @@ test_permissions.run_allow_scope):
     the rotate_logs tool_result an error) returns with no error, so the
     strict xfail XPASSes. Control: the recording ends at
     DocumentedBehaviorMismatch.
+
+Review round 2: finding 2's restart guard (client_without_restart: the
+later call an error, no second process, FAILS check_d); every D23/T9 and
+T10 permission case (recordings of artifacts/20261017T123420Z-60563, the
+`ask` one synthesized from the deny recording) passes as recorded and
+FAILS under one mutation each (PERMISSION_MUTATIONS); fakes/guard_hook.py
+answers per mode.
 """
 
 import functools
 import json
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 
 import pytest
@@ -73,7 +81,9 @@ from harness.claude_cli import CliResult
 from harness.constants import MAX_BUDGET_USD_PER_RUN, MAX_TURNS, MODEL_CLI_TIMEOUT_S, MODEL_ID, NEGOTIATION_LEGACY
 from harness.model_checks import TOOLS_CALL, calls_without_tool_use, mcp_tool_name
 from harness.error_checks import event_epoch
+from harness.hooks import GUARD_HOOK_SCRIPT, read_hook_log
 from harness.known_defects import DocumentedBehaviorMismatch
+from harness.mcp_setup import PYTHON
 from harness.model_run import ModelRun, allowed_tools_for, parse_stream
 from harness.wire import message_method
 import test_crash
@@ -320,6 +330,17 @@ def crash_result_dropped(*, text, records):
     return "\n".join(kept) + "\n", [r for r in records if r["epoch"] <= cut_epoch]
 
 
+def client_without_restart(*, text, records):
+    """Finding 2 mutation, a client that does not restart the crashed server:
+    the later echo call's tool_result becomes an error ("Connection closed",
+    the crashed call's text) and the second fake process's records are dropped."""
+    events = [json.loads(line) for line in text.splitlines()]
+    _index, use = tool_use_of(events=events, name=mcp_tool_name(server=test_crash.SERVER, tool=test_crash.NEXT_TOOL))
+    first_pid = [r["pid"] for r in records if r["event"] == "started"][0]
+    return (rewrite_tool_result(text=text, tool_use_id=use["id"], epoch=None, content=OTHER_ERROR_TEXT, is_error=True),
+            [r for r in records if r["pid"] == first_pid])
+
+
 def raised_by(*, call):
     """The exception a call raised (BaseException: pytest's skip too), or None."""
     try:
@@ -415,6 +436,19 @@ def test_crash_client_died_fails(free_sandbox, request, monkeypatch, mutation, m
     expect_equal(what="attempts the harness started (no retry)", expected=["attempt0"], actual=stub.labels)
 
 
+def test_crash_client_without_restart_fails(free_sandbox, request, monkeypatch):
+    """Finding 2 break: a client that stops restarting the crashed server
+    must FAIL check_d (plain AssertionError), although the doc line holds."""
+    text, records, hooks = recording(folder=CRASH_RECORDING, server=test_crash.SERVER)
+    mutated_text, mutated_records = client_without_restart(text=text, records=records)
+    step(text="replay %s with the later call an error and no second fake process" % CRASH_RECORDING)
+    stub, call = crash_call(sandbox=free_sandbox, request=request, monkeypatch=monkeypatch, hooks=hooks,
+                            attempts=[replay(stream_text=mutated_text,
+                                             records_by_server={test_crash.SERVER: mutated_records})])
+    assert_plain_failure(exc=raised_by(call=call), match="is_error of the first later call's tool_result")
+    expect_equal(what="attempts the harness started", expected=["attempt0"], actual=stub.labels)
+
+
 def test_crash_recorded_run_passes_and_records_the_restart(free_sandbox, request, monkeypatch):
     """Control: the unmutated crash recording passes every hard assert and
     raises nothing (the documented one-spawn line is record-only). run.json
@@ -444,6 +478,7 @@ CLEANUP_REASON = re.compile(r"%s[0-9a-f]{%d}" % (test_permissions.CLEANUP_PREFIX
 INJECTED_RPC_ID = 9001
 OTHER_ERROR_TEXT = "Connection closed"
 FIXED_DENIAL_TEXT = "Permission for this tool use was denied (fixed-client shape, offline replay)"
+OFFLINE_SERVICE = "svc-offline"
 
 
 def read_recording(*, folder, names):
@@ -602,27 +637,25 @@ def t9_recording():
     return files[STREAM_FILE], wire_records(text=files["wire-guard.jsonl"]), files[test_permissions.HOOK_LOG_NAME]
 
 
-def with_delete_all_call(*, text, records):
-    """The guard log plus a tools/call for delete_all, as if the client had
-    sent the denied call: it carries the delete_all tool_use id, so the
-    harness pairs it with that tool_use."""
+def with_tools_call(*, text, records, server, tool):
+    """The wire log of `server` plus a tools/call for `tool`, as if the client
+    had sent the stopped call: it carries the tool_use id of the first
+    mcp__<server>__<tool> tool_use, so the harness pairs it with that tool_use."""
     events = [json.loads(line) for line in text.splitlines()]
-    index, use = tool_use_of(events=events, name=mcp_tool_name(server=test_permissions.GUARD,
-                                                               tool=test_permissions.DELETE))
+    index, use = tool_use_of(events=events, name=mcp_tool_name(server=server, tool=tool))
     pid = [r["pid"] for r in records if r["event"] == "started"][0]
-    injected = {"epoch": event_epoch(event=events[index]) + 0.01, "event": "recv", "pid": pid,
-                "source": test_permissions.GUARD,
+    injected = {"epoch": event_epoch(event=events[index]) + 0.01, "event": "recv", "pid": pid, "source": server,
                 "msg": {"id": INJECTED_RPC_ID, "jsonrpc": "2.0", "method": TOOLS_CALL,
                         "params": {"_meta": {"claudecode/toolUseId": use["id"]}, "arguments": use["input"],
-                                   "name": test_permissions.DELETE}}}
+                                   "name": tool}}}
     return sorted(records + [injected], key=lambda r: r["epoch"])
 
 
-def t9_call(*, sandbox, request, text, hooks):
+def t9_call(*, sandbox, request, case_id, text, hooks):
     with open(os.path.join(sandbox.artifact_dir, test_permissions.HOOK_LOG_NAME), "w", encoding="utf-8") as handle:
         handle.write(hooks)
     return functools.partial(test_permissions.run_hook_guard, sandbox=sandbox, ledger=None, request=request,
-                             case_id="deny", reason=CLEANUP_REASON.search(text).group(0),
+                             case_id=case_id, reason=CLEANUP_REASON.search(text).group(0),
                              deny_reason=DENY_REASON.search(text).group(0))
 
 
@@ -632,18 +665,19 @@ def test_t9_recorded_deny_passes(free_sandbox, request, monkeypatch):
     stub_flow(monkeypatch=monkeypatch,
               attempts=[replay(stream_text=text, records_by_server={test_permissions.GUARD: records})])
     step(text="replay %s as recorded" % T9_RECORDING)
-    expect_equal(what="exception the recorded deny run raised", expected=None,
-                 actual=raised_by(call=t9_call(sandbox=free_sandbox, request=request, text=text, hooks=hooks)))
+    expect_equal(what="exception the recorded deny run raised", expected=None, actual=raised_by(
+        call=t9_call(sandbox=free_sandbox, request=request, case_id="deny", text=text, hooks=hooks)))
 
 
 def test_t9_server_got_delete_all_fails(free_sandbox, request, monkeypatch):
     """Break: the denied delete_all reached the server anyway."""
     text, records, hooks = t9_recording()
-    mutated = with_delete_all_call(text=text, records=records)
+    mutated = with_tools_call(text=text, records=records, server=test_permissions.GUARD, tool=test_permissions.DELETE)
     step(text="replay %s with a tools/call for delete_all added to the guard log" % T9_RECORDING)
     stub_flow(monkeypatch=monkeypatch,
               attempts=[replay(stream_text=text, records_by_server={test_permissions.GUARD: mutated})])
-    assert_plain_failure(exc=raised_by(call=t9_call(sandbox=free_sandbox, request=request, text=text, hooks=hooks)),
+    assert_plain_failure(exc=raised_by(call=t9_call(sandbox=free_sandbox, request=request, case_id="deny",
+                                                    text=text, hooks=hooks)),
                          match="delete_all reached the server 1 time(s) although the hook stopped it")
 
 
@@ -666,7 +700,7 @@ def t10a_attempt(*, fixed):
 
 def t10a_call(*, sandbox, request):
     return functools.partial(test_permissions.run_allow_scope, sandbox=sandbox, ledger=None, request=request,
-                             service="svc-offline")
+                             service=OFFLINE_SERVICE)
 
 
 def test_t10a_recorded_run_reaches_the_documented_xfail(free_sandbox, request, monkeypatch):
@@ -686,3 +720,202 @@ def test_t10a_fixed_client_shape_xpasses(free_sandbox, request, monkeypatch):
     expect_equal(what="exception the fixed-client replay raised", expected=None,
                  actual=raised_by(call=t10a_call(sandbox=free_sandbox, request=request)))
     assert_strict_xfail(test=test_permissions.test_server_allow_rule_does_not_reach_double_underscore_server)
+
+
+# D23/T9 and D23/T10: every permission case --------------------------------
+# Recordings of run 20261017T123420Z-60563 (env fingerprints dropped). The
+# `ask` recording is synthesized from the deny one (T9_RECORDING): its hook
+# log actions are rewritten deny -> ask; the stream and wire are the deny run's.
+OFFLINE_REASON = "cleanup-offline"
+OFFLINE_DENY_REASON = "denied-by-guard-hook-offline"  # T9 cases that do not assert the reason
+REASON_DROPPED_TEXT = "Permission for this tool use was denied (no hook reason, offline replay)"
+GUARD_HOOK_TIMEOUT_S = 10
+GUARD = test_permissions.GUARD
+OPS = test_permissions.OPS
+PERMISSION_RECORDINGS = {
+    "deny_rule": {"folder": "recorded-d23-t10-deny-rule", "servers": [GUARD], "hook_log": False,
+                  "rewrite_actions": {}},
+    "no_rule": {"folder": "recorded-d23-t10-no-rule", "servers": [GUARD, OPS], "hook_log": False,
+                "rewrite_actions": {}},
+    "matcher_without_wildcard": {"folder": "recorded-d23-t9-matcher-without-wildcard", "servers": [GUARD],
+                                 "hook_log": False, "rewrite_actions": {}},
+    "exit1_default": {"folder": "recorded-d23-t9-exit1-default", "servers": [GUARD], "hook_log": True,
+                      "rewrite_actions": {}},
+    "exit1_on_failure_block": {"folder": "recorded-d23-t9-exit1-on-failure-block", "servers": [GUARD],
+                               "hook_log": True, "rewrite_actions": {}},
+    "ask": {"folder": T9_RECORDING, "servers": [GUARD], "hook_log": True,
+            "rewrite_actions": {test_permissions.ACTION_DENY: test_permissions.ACTION_ASK}},
+}
+
+
+def permission_recording(*, case_id):
+    """(stream text, {server: wire records}, hook log text or None) of a case."""
+    row = PERMISSION_RECORDINGS[case_id]
+    wires = {server: "wire-%s.jsonl" % server for server in row["servers"]}
+    hook_names = [test_permissions.HOOK_LOG_NAME] if row["hook_log"] else []
+    files = read_recording(folder=row["folder"], names=[STREAM_FILE] + list(wires.values()) + hook_names)
+    hooks = None
+    if row["hook_log"]:
+        entries = wire_records(text=files[test_permissions.HOOK_LOG_NAME])
+        for entry in entries:
+            if entry["action"] in row["rewrite_actions"]:
+                entry["action"] = row["rewrite_actions"][entry["action"]]
+        hooks = "".join(json.dumps(entry, sort_keys=True, ensure_ascii=False) + "\n" for entry in entries)
+    return files[STREAM_FILE], {server: wire_records(text=files[wires[server]]) for server in wires}, hooks
+
+
+def permission_call(*, sandbox, request, case_id, text, hooks):
+    """The real test body for the case (no hook log file when hooks is None)."""
+    if hooks is not None:
+        with open(os.path.join(sandbox.artifact_dir, test_permissions.HOOK_LOG_NAME), "w",
+                  encoding="utf-8") as handle:
+            handle.write(hooks)
+    if case_id == "deny_rule":
+        return functools.partial(test_permissions.run_deny_rule, sandbox=sandbox, ledger=None, request=request,
+                                 reason=OFFLINE_REASON)
+    if case_id == "no_rule":
+        return functools.partial(test_permissions.run_no_rule, sandbox=sandbox, ledger=None, request=request,
+                                 service=OFFLINE_SERVICE)
+    reason_asserted = test_permissions.T9_CASES[case_id]["hook_action"] in (test_permissions.ACTION_DENY,
+                                                                          test_permissions.ACTION_ASK)
+    return functools.partial(test_permissions.run_hook_guard, sandbox=sandbox, ledger=None, request=request,
+                             case_id=case_id, reason=OFFLINE_REASON,
+                             deny_reason=DENY_REASON.search(text).group(0) if reason_asserted
+                             else OFFLINE_DENY_REASON)
+
+
+def init_lists_tool(*, text, name):
+    """The stream with `name` added to the system/init tools."""
+    events = [json.loads(line) for line in text.splitlines()]
+    inits = [e for e in events if e["type"] == "system" and "subtype" in e and e["subtype"] == "init"]
+    expect_equal(what="system/init events in the recording", expected=1, actual=len(inits))
+    inits[0]["tools"].append(name)
+    return "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n"
+
+
+def hook_line_for(*, text, server, tool, action):
+    """One guard-hook log line for the first mcp__<server>__<tool> tool_use."""
+    events = [json.loads(line) for line in text.splitlines()]
+    index, use = tool_use_of(events=events, name=mcp_tool_name(server=server, tool=tool))
+    entry = {"action": action, "epoch": event_epoch(event=events[index]),
+             "input": {"hook_event_name": test_permissions.PRE_TOOL_USE, "tool_input": use["input"],
+                       "tool_name": use["name"], "tool_use_id": use["id"]}}
+    return json.dumps(entry, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def without_calls_named(*, records, tool):
+    """Wire records without the tools/call for `tool`, its reply and its `tool_executed`."""
+    call_ids = {(r["pid"], r["msg"]["id"]) for r in records if r["event"] == "recv"
+                and message_method(message=r["msg"]) == TOOLS_CALL and r["msg"]["params"]["name"] == tool}
+    return [r for r in records
+            if not (r["event"] == "recv" and "id" in r["msg"] and (r["pid"], r["msg"]["id"]) in call_ids)
+            and not (r["event"] in CALL_EVENTS and (r["pid"], r["rpc_id"]) in call_ids)
+            and not (r["event"] == "sent" and "id" in r["msg"] and "method" not in r["msg"]
+                     and (r["pid"], r["msg"]["id"]) in call_ids)]
+
+
+def mutate_permission(*, mutation, text, records, hooks):
+    """(stream text, wire records, hook log) after one mutation."""
+    delete_name = mcp_tool_name(server=GUARD, tool=test_permissions.DELETE)
+    if mutation == "init_lists_delete_all":
+        return init_lists_tool(text=text, name=delete_name), records, hooks
+    if mutation == "hook_ran_for_delete_all":
+        return text, records, hook_line_for(text=text, server=GUARD, tool=test_permissions.DELETE,
+                                            action=test_permissions.ACTION_DENY)
+    if mutation == "ops_got_rotate_logs":
+        return text, dict(records, **{OPS: with_tools_call(text=text, records=records[OPS], server=OPS,
+                                                           tool=test_permissions.ROTATE)}), hooks
+    if mutation == "reason_dropped":
+        events = [json.loads(line) for line in text.splitlines()]
+        _index, use = tool_use_of(events=events, name=delete_name)
+        return rewrite_tool_result(text=text, tool_use_id=use["id"], epoch=None, content=REASON_DROPPED_TEXT,
+                                   is_error=True), records, hooks
+    if mutation == "delete_all_call_dropped":
+        return text, dict(records, **{GUARD: without_calls_named(records=records[GUARD],
+                                                                 tool=test_permissions.DELETE)}), hooks
+    expect_equal(what="mutation name", expected="guard_got_delete_all", actual=mutation)
+    return text, dict(records, **{GUARD: with_tools_call(text=text, records=records[GUARD], server=GUARD,
+                                                         tool=test_permissions.DELETE)}), hooks
+
+
+@pytest.mark.parametrize("case_id", sorted(PERMISSION_RECORDINGS))
+def test_permission_recorded_run_passes(free_sandbox, request, monkeypatch, case_id):
+    """Control: each recorded permission case passes its real test body. The
+    `ask` recording is synthesized from the deny one (hook log actions
+    rewritten deny -> ask), so it proves the asserts can fail, not what
+    2.1.296 does with "ask"."""
+    text, records, hooks = permission_recording(case_id=case_id)
+    stub_flow(monkeypatch=monkeypatch, attempts=[replay(stream_text=text, records_by_server=records)])
+    step(text="replay %s as recorded (case %s)" % (PERMISSION_RECORDINGS[case_id]["folder"], case_id))
+    exc = raised_by(call=permission_call(sandbox=free_sandbox, request=request, case_id=case_id, text=text,
+                                         hooks=hooks))
+    expect_equal(what="exception the recorded %s run raised" % case_id, expected=None,
+                 actual=None if exc is None else repr(exc))
+
+
+# id: (case, mutation, the start of the failing check's message)
+PERMISSION_MUTATIONS = {
+    "deny_rule-init_lists_delete_all": ("deny_rule", "init_lists_delete_all",
+                                        "mcp__guard__delete_all in system/init tools under"),
+    "deny_rule-guard_got_delete_all": ("deny_rule", "guard_got_delete_all",
+                                       "delete_all tools/call that reached the server despite the deny rule"),
+    "no_rule-ops_got_rotate_logs": ("no_rule", "ops_got_rotate_logs",
+                                    "tools/call that reached guard__ops with no allow rule"),
+    "matcher_without_wildcard-hook_ran_for_delete_all": ("matcher_without_wildcard", "hook_ran_for_delete_all",
+                                                         "tools the hook ran for with matcher 'mcp__guard'"),
+    "exit1_default-delete_all_call_dropped": ("exit1_default", "delete_all_call_dropped",
+                                              "tools/call for 'delete_all' that reached server guard"),
+    "exit1_on_failure_block-guard_got_delete_all": ("exit1_on_failure_block", "guard_got_delete_all",
+                                                    "delete_all reached the server 1 time(s) although the hook"),
+    "ask-guard_got_delete_all": ("ask", "guard_got_delete_all",
+                                 "delete_all reached the server 1 time(s) although the hook"),
+    "ask-reason_dropped": ("ask", "reason_dropped", "the hook's permissionDecisionReason in the denied tool_result"),
+}
+
+
+@pytest.mark.parametrize("mutation_id", list(PERMISSION_MUTATIONS))
+def test_permission_mutation_fails(free_sandbox, request, monkeypatch, mutation_id):
+    """Break: each mutation of a recorded permission case FAILS its real test
+    body with a plain AssertionError (not a skip, not the xfail exception).
+    `ask` cases start from the deny recording, rewritten deny -> ask."""
+    case_id, mutation, match = PERMISSION_MUTATIONS[mutation_id]
+    text, records, hooks = permission_recording(case_id=case_id)
+    text, records, hooks = mutate_permission(mutation=mutation, text=text, records=records, hooks=hooks)
+    stub_flow(monkeypatch=monkeypatch, attempts=[replay(stream_text=text, records_by_server=records)])
+    step(text="replay %s (case %s) with mutation %s" % (PERMISSION_RECORDINGS[case_id]["folder"], case_id, mutation))
+    assert_plain_failure(exc=raised_by(call=permission_call(sandbox=free_sandbox, request=request, case_id=case_id,
+                                                            text=text, hooks=hooks)), match=match)
+
+
+# fakes/guard_hook.py on its own: case id: (mode, tool name, exit code, stdout JSON or None, logged action)
+HOOK_TARGET = mcp_tool_name(server=GUARD, tool=test_permissions.DELETE)
+HOOK_OTHER = mcp_tool_name(server=GUARD, tool=test_permissions.LIST)
+GUARD_HOOK_CASES = {
+    "deny": ("deny", HOOK_TARGET, 0, test_permissions.ACTION_DENY, test_permissions.ACTION_DENY),
+    "ask": ("ask", HOOK_TARGET, 0, test_permissions.ACTION_ASK, test_permissions.ACTION_ASK),
+    "fail": ("fail", HOOK_TARGET, 1, None, test_permissions.ACTION_EXIT1),
+    "ask_other_tool": ("ask", HOOK_OTHER, 0, None, test_permissions.ACTION_PASS),
+}
+
+
+@pytest.mark.parametrize("case_id", list(GUARD_HOOK_CASES))
+def test_guard_hook_answers_per_mode(free_sandbox, case_id):
+    """The hook prints the permissionDecision of its mode (hooks.md:1933-1934)
+    for the target tool only, exits as documented, and logs its action."""
+    mode, tool, exit_code, decision, action = GUARD_HOOK_CASES[case_id]
+    expected = None if decision is None else {"hookSpecificOutput": {
+        "hookEventName": test_permissions.PRE_TOOL_USE, "permissionDecision": decision,
+        "permissionDecisionReason": OFFLINE_DENY_REASON}}
+    log_path = os.path.join(free_sandbox.artifact_dir, test_permissions.HOOK_LOG_NAME)
+    hook_input = {"hook_event_name": test_permissions.PRE_TOOL_USE, "tool_name": tool, "tool_input": {},
+                  "tool_use_id": "toolu_offline"}
+    step(text="run %s with mode %s for a %s hook input" % (GUARD_HOOK_SCRIPT, mode, tool))
+    proc = subprocess.run([PYTHON, GUARD_HOOK_SCRIPT, log_path, mode, HOOK_TARGET, OFFLINE_DENY_REASON],
+                          input=json.dumps(hook_input), capture_output=True, text=True, timeout=GUARD_HOOK_TIMEOUT_S,
+                          check=False)
+    got(what="guard hook (exit code, stdout, stderr)", value=(proc.returncode, proc.stdout, proc.stderr))
+    expect_equal(what="exit code of the guard hook", expected=exit_code, actual=proc.returncode)
+    expect_equal(what="stdout of the guard hook (JSON)", expected=expected,
+                 actual=json.loads(proc.stdout) if proc.stdout else None)
+    expect_equal(what="actions in the guard hook log", expected=[action],
+                 actual=[entry["action"] for entry in read_hook_log(path=log_path)])

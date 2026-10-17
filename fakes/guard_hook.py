@@ -1,30 +1,31 @@
-"""PreToolUse command hook for D23/T9 (hooks.md), given with
-`claude -p --settings '<inline JSON>'`.
+"""PreToolUse command hook for D23/T9 (hooks.md), given with `claude -p --settings '<inline JSON>'`.
 
   python3 guard_hook.py <log path> <mode> <target tool name> <reason>
 
-Claude Code runs it with the hook input (JSON) on stdin. Every run appends
-one line to <log path>: {"epoch": <wall clock>, "input": <hook input as
-received>, "action": <what this run did>}, written BEFORE the hook
-answers, so the log shows every call the hook saw.
+Claude Code runs it with the hook input (JSON) on stdin. Every run appends one line to <log path>,
+{"epoch": <wall clock>, "input": <hook input as received>, "action": <what this run did>}, BEFORE the
+hook answers, so the log shows every call the hook saw.
 
-For any tool other than <target tool name> it prints nothing and exits 0
-(action "pass": hooks.md, exit 0 with no output lets the call go on). For
-the target tool:
+For any tool other than <target tool name> it prints nothing and exits 0 (action "pass": hooks.md,
+exit 0 with no output lets the call go on). For the target tool:
 
-  deny  prints {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-        "permissionDecision": "deny", "permissionDecisionReason": <reason>}}
-        and exits 0 (action "deny"; hooks.md "PreToolUse decision control").
-  fail  prints nothing to stdout, one line to stderr, and exits 1 (action
-        "exit1"): a non-blocking error, unless the handler sets
-        `onFailure: "block"` (hooks.md "Block the action when a hook fails").
+  deny  prints {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": <reason>}} and exits 0 (action "deny"; hooks.md "PreToolUse decision
+        control").
+  ask   the same with "permissionDecision": "ask" (action "ask"). hooks.md:1933-1934: "ask" prompts the
+        user; in a `-p` run where no one can answer, Claude Code denies the call, and Claude reads the
+        reason in the tool result.
+  fail  prints nothing to stdout, one line to stderr, and exits 1 (action "exit1"): a non-blocking
+        error, unless the handler sets `onFailure: "block"` (hooks.md "Block the action when a hook fails").
 """
 
 import json
 import sys
 import time
 
-MODES = ("deny", "fail")
+TARGET_ACTIONS = {"deny": "deny", "ask": "ask", "fail": "exit1"}  # mode -> action for the target tool
+MODES = tuple(TARGET_ACTIONS)
+DECISION_ACTIONS = ("deny", "ask")  # actions answered with a permissionDecision
 FAIL_EXIT_CODE = 1
 USAGE_EXIT_CODE = 3  # not 2: exit 2 is a blocking error on PreToolUse
 
@@ -38,13 +39,13 @@ def main():
     now = time.time()
     payload = json.loads(raw)
     is_target = payload["tool_name"] == target
-    action = ("deny" if mode == "deny" else "exit1") if is_target else "pass"
+    action = TARGET_ACTIONS[mode] if is_target else "pass"
     with open(log_path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps({"epoch": now, "input": payload, "action": action}, sort_keys=True,
                                 ensure_ascii=False) + "\n")
-    if action == "deny":
+    if action in DECISION_ACTIONS:
         sys.stdout.write(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
+            "hookEventName": "PreToolUse", "permissionDecision": action, "permissionDecisionReason": reason}}))
         sys.exit(0)
     if action == "exit1":
         sys.stderr.write("guard_hook: failing on purpose for %s\n" % target)

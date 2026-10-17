@@ -1,56 +1,38 @@
-"""D20/T1: the stdio server crashes with a tools/call in flight.
+"""D20/T1: the stdio server crashes with a tools/call in flight (PLAN.md
+D20/T1, observations.md).
 
 Model tier: needs ANTHROPIC_API_KEY, costs tokens (skipped without a key).
-Run CRASH_RUNS times (one pytest item each, fresh sandbox); every run must
-pass the same D asserts, and a trailing item checks that every run showed
-the same client behavior (same signature).
+CRASH_RUNS runs (one item each, fresh sandbox) must pass the same D
+asserts; a trailing item checks that every run had the same signature.
 
-Server `crashy`: stdio fake, mode exit_on_first_tools_call, toolset smoke
-(echo_canary, echo). It serves the handshake and tools/list; on the first
-tools/call of the client it logs the request (`recv`), logs an `exit`
-record, and exits 3 without replying. A process the same client starts
-again serves normally. Every start logs one `started` record (pid, ppid).
-The prompt asks for echo_canary once and, after it fails, for echo once (a
-later call to the same server: does the client start it again?). Both
-tool_uses are the S trigger (require_all_triggers): without the later call
-the restart question has no answer, so such an attempt is inconclusive.
-Hooks are logged as in D16.
+Server `crashy` (stdio fake, mode exit_on_first_tools_call, toolset smoke)
+logs the first tools/call, an `exit` record, and exits 3 without replying;
+a process started again serves normally. The prompt asks for echo_canary,
+then echo (a later call to the same server); both tool_uses are the S
+trigger (require_all_triggers). Hooks are logged as in D16.
 
   D  gate, legacy era, both tools in system/init tools.
-  D  the first process got exactly one tools/call (echo_canary), logged
-     `exit` for that JSON-RPC id, and sent no reply to it.
-  D  the run does not hang: the echo_canary tool_result's stream timestamp
-     is at most CRASH_FAILURE_BOUND_S (5 s) after the fake's own `exit`
-     epoch (one container clock). A client that missed the exit would wait
-     for the 30 s tool timeout (MCP_TOOL_TIMEOUT_MS; stdio has no
-     per-request timer, mcp.md:433). The measured delay is recorded.
-  D  that tool_use has exactly one tool_result, is_error true (text recorded).
-  D  no eager restart: no `started` record between the fake's exit and the
-     next tool_use.
+  D  the first process got one tools/call (echo_canary), logged `exit` for
+     its JSON-RPC id, and sent no reply to it.
+  D  that tool_use got exactly one tool_result, is_error true, at most
+     CRASH_FAILURE_BOUND_S after the fake's `exit` epoch (a client that
+     missed the exit would wait for the 30 s MCP_TOOL_TIMEOUT_MS; stdio has
+     no per-request timer, mcp.md:433).
+  D  no eager restart: no `started` record between the exit and the next
+     tool_use.
+  D  lazy restart: the first later call got one tool_result, is_error not
+     true, from a fake process other than the crashed one.
   D  the run ends with a `result` event, the last line.
-  D  every run shows the same client behavior (trailing item).
-  On every attempt, before the retry decision (harness/model_flow.py, QA
-  step 5): the `result` event exists, and whenever the echo_canary
-  tool_use exists the crashed-call facts above (one tools/call, its
-  `exit`, no reply, exactly one tool_result, is_error true, the 5 s
-  bound) are asserted (crash_attempt_check). A client that dies after the
-  crash fails the item; it is never retried or skipped as inconclusive.
-  Documented, record-only (not a strict xfail, not a defect): mcp.md:377
-     says "Stdio servers are local processes, and Claude Code doesn't
-     reconnect them automatically". That line sits under "Automatic
-     reconnection", so it is about eager reconnects. 2.1.296 does not
-     reconnect eagerly (the D check above); it starts the server again
-     lazily, on the next call to it (observations.md). The 2026-07-28 spec
-     says the client SHOULD restart a crashed stdio server
-     (basic__transports__stdio.md:116; the run uses the legacy 2025-11-25
-     era, whose transports page has no such line). So the lazy restart is a
-     doc gap, recorded, not a defect: the spawn count is compared with the
-     doc line by record_documented, and run.json key
-     `observations.documented_no_restart` holds the doc line, the spawns
-     and whether they match. A strict xfail here would only pass if the
-     client got worse.
-  Recorded: what the later call got (tool_result, the process that served
-     it, whether tools/list was sent again), the hook inputs, the answer.
+  The crashed-call facts are also asserted on every attempt, before the
+  retry decision (crash_attempt_check): a client that dies after the crash
+  fails the item, it is never retried or skipped.
+  Documented, record-only: mcp.md:377 "Claude Code doesn't reconnect them
+     automatically" (under "Automatic reconnection"; the 2026-07-28 spec
+     says SHOULD restart, basic__transports__stdio.md:116). The lazy
+     restart is a hard D fact above; the doc line's spawn count is only
+     recorded (record_documented, run.json
+     `observations.documented_no_restart`).
+  Recorded: the later calls, the spawns, the hook inputs, the answer.
 """
 
 import os
@@ -295,6 +277,15 @@ def check_d(*, sandbox, triggered, hook_log):
     for row in later_views:
         expect_equal(what="tool_result blocks for the later tool_use %s" % row["name"], expected=1,
                      actual=len(row["tool_results"]))
+    # The lazy restart (D): the first later call is served by a new process.
+    first_later = later_views[0]
+    first_result = first_later["tool_results"][0]
+    expect_true(what="is_error of the first later call's tool_result (%s restarted on that call)" % SERVER,
+                expected="not True", actual="%r (text %r)" % (first_result["is_error"], first_result["text"]),
+                holds=first_result["is_error"] is not True)
+    expect_true(what="fake processes that got the first later call (pids)",
+                expected="at least one, not the crashed pid %d" % first_pid, actual=first_later["reached_pids"],
+                holds=bool(first_later["reached_pids"]) and first_pid not in first_later["reached_pids"])
     expect_true(what="final result event in the stream", expected="present", actual="present"
                 if stream.result is not None else "absent", holds=stream.result is not None)
     expect_equal(what="stream line of the result event", expected=len(stream.events) - 1,
