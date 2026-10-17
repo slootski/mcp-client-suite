@@ -25,23 +25,24 @@ failure (a doc gap, or an out-of-spec server).
 | 7 | D16/T1 + T2 tool errors | `tests/test_tool_errors.py` | `isError: true`; JSON-RPC -32602; 5 repeats each + S rate items | none |
 | 8 | D19/T1 + T3 idle timeout and cancel | `tests/test_idle_timeout.py` | 3 runs legacy + 1 run unset | give-up in [2.75 s, 5 s) with idle 3000 (env-vars.md:337); 2.1.296 gives up at 30 s (4 items) |
 | 9 | D20/T1 crash mid-call | `tests/test_crash.py` | 3 runs + one "same every run" item | none. Hard: the first later call succeeds on a new process. Recorded: one spawn, no restart (mcp.md:377), a doc gap |
-| 10 | D23/T9 (+ T10) hooks and permission rules | `tests/test_permissions.py` | T9: deny, ask, matcher without `.*`, exit 1, `onFailure: "block"`; T10: deny rule, no-allow-rule control, variant A, variant B | T10 A: `mcp__guard` also allows `guard__ops` (changelog.md:212, fixed 2.1.299); T10 B: deny `mcp__guard__ops` does not apply (changelog.md:297, fixed 2.1.299) |
+| 10 | D23/T9 (+ T10, T13) hooks, permission rules, MCP server policy | `tests/test_permissions.py` | T9: deny, ask, allow, matcher without `.*`, exit 1, `onFailure: "block"`; T10: deny rule, no-allow-rule control, variant A, variant B; T13: user-scope `deniedMcpServers`, `allowedMcpServers` | T10 A: `mcp__guard` also allows `guard__ops` (changelog.md:212, changed in 2.1.299); T10 B: deny `mcp__guard__ops` does not apply (changelog.md:297, fixed in 2.1.299) |
 
 Harness self-checks (free, no model call): `tests/test_harness_offline.py`
 replays recorded model runs through the real test code with one fact
 broken at a time, and checks that each break fails the test (not skip,
-not xfail), and that a fixed-client shape of each strict xfail would
-XPASS. The recorded runs cover the deny rule, the no-rule control, the
-matcher without `.*`, exit 1, `onFailure: "block"`, and a crash where the
-client does not restart; the `ask` replay is synthesized from the deny
-recording. `tests/test_gate.py` checks the run's exit codes: 13 and 14 by
-pytest inside pytest; 15 by a stub replay through the flow.
+not xfail), and that a fixed-client shape of findings 1 and 3 would
+XPASS. The replays cover the deny rule, the no-rule control, the hook
+`deny` and `ask`, the matcher without `.*`, exit 1, `onFailure: "block"`,
+and a crash where the client does not restart. `tests/test_gate.py`
+checks the exit codes: 13 and 14 by pytest inside pytest, 15 by a stub
+replay through the flow. `tests/test_secret_controls.py` plants dummy
+keys to prove the secret controls can fail.
 
 Totals: 76 test ideas in docs 12 to 23 (one of them, D13/T7, merged into
-D20/T3), plus 9 harness checks from doc 11. 27 ideas are implemented (3
-of them only in part: D12/T2, D13/T1, D19/T3); they run as 132 pytest
-items (87 free, 45 model). The first item to build next is D23/T13
-(managed MCP allow and deny lists).
+D20/T3), plus 9 harness checks from doc 11. 28 ideas are implemented (4
+of them only in part: D12/T2, D13/T1, D19/T3, D23/T13); they run as 132
+pytest items: 81 run Claude Code, 51 self-test the harness. The first
+item to build next is the rest of D23/T13: `managed-mcp.json`.
 
 ## Columns
 
@@ -134,7 +135,7 @@ items (87 free, 45 model). The first item to build next is D23/T13
 | D19/T4 | Auto-background threshold in `-p` | stream | D | P1 | not implemented: observe-only, no stream event is documented |
 | D19/T5 | SIGINT / SIGTERM to `claude -p` mid-call: cancel or teardown, exit 143 | wire log + exit code | D | P1 | not implemented[^scope] |
 | D19/T6 | HTTP per-request timer vs stdio none | wire log | D | P2 | not implemented: observe-only |
-| D20/T1 | stdio server exits mid-call: error `tool_result` within 5 s, no hang; is it restarted? | wire log (`exit`, `started`) + stream timestamps | D (S trigger) | P0 | implemented: `tests/test_crash.py::test_stdio_crash_mid_call` (3 runs), `::test_stdio_crash_mid_call_same_every_run`. Hard: the first later call succeeds on a new process. "No restart" (mcp.md:377) is recorded only, a doc gap (2026-07-28 basic__transports__stdio.md:116: SHOULD restart) |
+| D20/T1 | stdio server exits mid-call: error `tool_result` within 5 s, no hang; is it restarted? | wire log (`exit`, `started`) + stream timestamps | D (S trigger) | P0 | implemented: `tests/test_crash.py::test_stdio_crash_mid_call` (3 runs), `::test_stdio_crash_mid_call_same_every_run`. Hard: the first later call succeeds on a new process. "No restart" (mcp.md:377) is recorded only, a doc gap |
 | D20/T2 | Crash while idle: when does the client notice; spawn count | wire log | D | P0 | not implemented[^scope] |
 | D20/T3 | HTTP server drops, comes back: backoff, reconnect; 5 failures mark it failed (merged D13/T7) | HTTP fake log | D | P0 | not implemented[^scope] |
 | D20/T4 | stdio shutdown: SIGINT, SIGTERM after 100 ms, SIGKILL after 400 ms more; no orphan | fake's signal log + `ps` | D | P1 | not implemented[^scope] (the fake logs the SIGINT; nothing asserts it) |
@@ -153,7 +154,7 @@ items (87 free, 45 model). The first item to build next is D23/T13
 | D22/T2 | Flake policy table: fact, variance, treatment | the table | - | P0 | implemented: [`docs/flake-policy.md`](docs/flake-policy.md) |
 | D22/T3 | Sampling cannot be set from outside: why the in-depth tests check wire facts | - | - | P1 | implemented: `docs/flake-policy.md` ("Classes") |
 | D22/T4 | Tool order in `tools/list` does not change which tool is called | wire log | S | P1 | not implemented[^scope] |
-| D22/T5 | Scripted fake model behind `ANTHROPIC_BASE_URL` | - | D | P2 | not implemented, for time: S facts need the real model; D facts could move to a scripted model, which would see the same no-tool-search configuration the suite already pins (mcp.md:313). The per-change tier a team version would add first |
+| D22/T5 | Scripted fake model behind `ANTHROPIC_BASE_URL` | - | D | P2 | not implemented, for time: D facts could move to it, with the same no-tool-search pin (mcp.md:313); S facts need the real model. See README |
 
 ## Question 5: What else has to be true
 
@@ -166,22 +167,18 @@ items (87 free, 45 model). The first item to build next is D23/T13
 | D23/T6 | Root-level `anyOf`/`oneOf`/`allOf` schema: flattened or skipped | stream | D | P2 | not implemented: observe-only |
 | D23/T7 | Tool name over 128 chars is left out, the others stay | stream + debug log | D | P2 | not implemented: observe-only |
 | D23/T8 | `requiresUserInteraction` tool under `--permission-prompts none` is denied | stream | D | P1 | not implemented[^scope] |
-| D23/T9 | PreToolUse hook denies `delete_all`: no `tools/call` for it; variants: hook `ask` (hooks.md:1934: in `-p` it is denied and its reason goes to the tool result), matcher without `.*`, hook exit 1, `onFailure: "block"` | wire log + hook log + stream | D (S trigger) | P0 | implemented: `tests/test_permissions.py::test_pre_tool_use_hook_guards_mcp_tool` (5 cases) |
+| D23/T9 | PreToolUse hook denies `delete_all`: no `tools/call` for it; variants: hook `ask` (hooks.md:1934: in `-p` it is denied and its reason goes to the tool result; one `permission_denied` event, the others none), hook `allow` with no allow rule (the call reaches the server, hooks.md:1933), matcher without `.*`, hook exit 1, `onFailure: "block"` | wire log + hook log + stream | D (S trigger) | P0 | implemented: `tests/test_permissions.py::test_pre_tool_use_hook_guards_mcp_tool` (6 cases) |
 | D23/T10 | Deny rule for one tool (the tool is absent from `system/init`, cli-reference.md:87; no `tools/call`); least privilege for a server named `guard__ops` (server-level deny; allow on `mcp__guard`) | wire log of both fakes + stream (`permission_denials`, `permission_denied`) | D (S trigger) | P0 | implemented: `tests/test_permissions.py::test_deny_rule_keeps_call_from_server`, `::test_tool_without_allow_rule_is_denied` (control), `::test_server_allow_rule_does_not_reach_double_underscore_server` (strict xfail), `::test_server_deny_rule_stops_double_underscore_server` (strict xfail) |
 | D23/T11 | `ANTHROPIC_API_KEY` reaches a stdio server by default, not with `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` or `CLAUDE_CODE_MCP_ALLOWLIST_ENV=1`; merged with D13/T4 | wire log (sha8 + length; env names) | D | P0 | implemented: `tests/test_credentials.py::test_stdio_inherits_credentials_by_default`, `::test_stdio_env_scrub_strips_inherited_credentials`, `::test_stdio_allowlist_env_passes_only_baseline_and_configured_env` (env-vars.md:334) |
 | D23/T12 | Invalid input schema next to a good tool | stream | D | P1 | not implemented[^scope] |
-| D23/T13 | Managed policy (`allowedMcpServers`, `deniedMcpServers`, `managed-mcp.json`) | - | D | P2 | not implemented: a deployed `managed-mcp.json` makes every `--mcp-config` run exit, so it needs its own container. **First next item**: the policy Bay sells against |
+| D23/T13 | MCP server policy (`allowedMcpServers`, `deniedMcpServers`, `managed-mcp.json`): a denied or not-allowed server is never started, wherever it is defined | wire log of both fakes + stream (`system/init`) | D (S trigger) | P0 (doc 23: P2; raised, it is the policy Bay sells) | partly implemented: `tests/test_permissions.py::test_mcp_server_policy_in_user_settings[denied]`, `[allowed_only]` (user-scope lists in inline `--settings`; settings-reference.md:4967-4969, managed-mcp.md:250, :260). Not implemented: `managed-mcp.json`, the first next item. Only it needs its own container: a deployed one makes every `--mcp-config` run exit (managed-mcp.md:105) |
 | D23/T14 | `readOnlyHint: true` on a destructive tool with no allow rule: denied like any tool | stream | D | P2 | not implemented[^scope]. The plain "no allow rule, denied" case is checked by `tests/test_permissions.py::test_tool_without_allow_rule_is_denied` |
 
-## Flake policy
-
-One row per fact the suite checks, with its treatment:
+Every checked fact and its treatment:
 [`docs/flake-policy.md`](docs/flake-policy.md). Exit codes:
 [`docs/exit-codes.md`](docs/exit-codes.md).
 
 [^scope]: Not built because the build was cut to the 10 items of doc 24,
-    not because the idea was wrong. The mail asks for about 2-3 hours;
-    this work took longer: about 7 hours of the candidate's time in the
-    plan-review and build sessions (PROMPTS.md timestamps), plus writing
-    the plan on 10-14 to 10-16, which was not timed. A row gives its own
-    reason only when the reason is not this cut.
+    not because the idea was wrong (the mail asks for about 2-3 hours;
+    the time spent is in [README](README.md#time-and-cost)). A row gives
+    its own reason only when the reason is not this cut.
