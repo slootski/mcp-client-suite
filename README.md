@@ -54,9 +54,9 @@ run; with fewer, it is skipped as inconclusive. Results: [Results](#results).
   `tests/test_gate.py` checks exits 13, 14 and 15 (pytest inside pytest,
   and replays with the API's rejection written in).
   `tests/test_secret_controls.py` does the same for the secret controls.
-- **Host pauses.** A model attempt whose wall clock jumps more than 5 s
-  past its monotonic time (e.g. a Mac that sleeps) is inconclusive and
-  retried, so a pause does not fail a timing check.
+- **Host pauses.** A model attempt whose wall and monotonic spans differ
+  by more than 5 s (e.g. a Mac that sleeps) is inconclusive and retried;
+  its non-timing D checks still run.
 
 ## What the suite shows
 
