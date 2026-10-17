@@ -58,12 +58,12 @@ test_permissions.run_allow_scope):
     strict xfail XPASSes. Control: the recording ends at
     DocumentedBehaviorMismatch.
 
-Review round 2: finding 2's restart guard (client_without_restart: the
-later call an error, no second process, FAILS check_d); every D23/T9 and
-T10 permission case (recordings of artifacts/20261017T123420Z-60563, the
-`ask` one synthesized from the deny recording) passes as recorded and
-FAILS under one mutation each (PERMISSION_MUTATIONS); fakes/guard_hook.py
-answers per mode.
+Review round 2: finding 2's restart guard (NO_RESTART_MUTATIONS: the
+later call an error with no second process, or no second process alone,
+each FAILS check_d); every D23/T9 and T10 permission case (recordings of
+artifacts/20261017T123420Z-60563, the `ask` one synthesized from the deny
+recording) passes as recorded and FAILS under at least one mutation each
+(PERMISSION_MUTATIONS); fakes/guard_hook.py answers per mode.
 """
 
 import functools
@@ -330,15 +330,26 @@ def crash_result_dropped(*, text, records):
     return "\n".join(kept) + "\n", [r for r in records if r["epoch"] <= cut_epoch]
 
 
+def first_process_only(*, records):
+    """The wire records of the first fake process (later processes dropped)."""
+    first_pid = [r["pid"] for r in records if r["event"] == "started"][0]
+    return [r for r in records if r["pid"] == first_pid]
+
+
 def client_without_restart(*, text, records):
     """Finding 2 mutation, a client that does not restart the crashed server:
     the later echo call's tool_result becomes an error ("Connection closed",
     the crashed call's text) and the second fake process's records are dropped."""
     events = [json.loads(line) for line in text.splitlines()]
     _index, use = tool_use_of(events=events, name=mcp_tool_name(server=test_crash.SERVER, tool=test_crash.NEXT_TOOL))
-    first_pid = [r["pid"] for r in records if r["event"] == "started"][0]
     return (rewrite_tool_result(text=text, tool_use_id=use["id"], epoch=None, content=OTHER_ERROR_TEXT, is_error=True),
-            [r for r in records if r["pid"] == first_pid])
+            first_process_only(records=records))
+
+
+def second_process_dropped(*, text, records):
+    """Finding 2 mutation: the stream as recorded (the later call succeeds),
+    but no second fake process served it (its wire records are dropped)."""
+    return text, first_process_only(records=records)
 
 
 def raised_by(*, call):
@@ -436,16 +447,25 @@ def test_crash_client_died_fails(free_sandbox, request, monkeypatch, mutation, m
     expect_equal(what="attempts the harness started (no retry)", expected=["attempt0"], actual=stub.labels)
 
 
-def test_crash_client_without_restart_fails(free_sandbox, request, monkeypatch):
+# id: (mutation, the start of the failing check's message)
+NO_RESTART_MUTATIONS = {
+    "client_without_restart": (client_without_restart, "is_error of the first later call's tool_result"),
+    "second_process_dropped": (second_process_dropped, "fake processes that got the first later call"),
+}
+
+
+@pytest.mark.parametrize("mutation_id", list(NO_RESTART_MUTATIONS))
+def test_crash_client_without_restart_fails(free_sandbox, request, monkeypatch, mutation_id):
     """Finding 2 break: a client that stops restarting the crashed server
     must FAIL check_d (plain AssertionError), although the doc line holds."""
+    mutate, match = NO_RESTART_MUTATIONS[mutation_id]
     text, records, hooks = recording(folder=CRASH_RECORDING, server=test_crash.SERVER)
-    mutated_text, mutated_records = client_without_restart(text=text, records=records)
-    step(text="replay %s with the later call an error and no second fake process" % CRASH_RECORDING)
+    mutated_text, mutated_records = mutate(text=text, records=records)
+    step(text="replay %s with mutation %s" % (CRASH_RECORDING, mutation_id))
     stub, call = crash_call(sandbox=free_sandbox, request=request, monkeypatch=monkeypatch, hooks=hooks,
                             attempts=[replay(stream_text=mutated_text,
                                              records_by_server={test_crash.SERVER: mutated_records})])
-    assert_plain_failure(exc=raised_by(call=call), match="is_error of the first later call's tool_result")
+    assert_plain_failure(exc=raised_by(call=call), match=match)
     expect_equal(what="attempts the harness started", expected=["attempt0"], actual=stub.labels)
 
 
@@ -887,14 +907,19 @@ def test_permission_mutation_fails(free_sandbox, request, monkeypatch, mutation_
                                                             text=text, hooks=hooks)), match=match)
 
 
-# fakes/guard_hook.py on its own: case id: (mode, tool name, exit code, stdout JSON or None, logged action)
+# fakes/guard_hook.py on its own (fakes/ cannot be imported, so its values are restated here).
+HOOK_EXIT_OK = 0  # fakes/guard_hook.py: sys.exit(0) after pass, deny or ask
+HOOK_EXIT_FAIL = 1  # fakes/guard_hook.py FAIL_EXIT_CODE (mode fail)
+DECISION_DENY = "deny"  # hooks.md:1933: the permissionDecision values
+DECISION_ASK = "ask"
 HOOK_TARGET = mcp_tool_name(server=GUARD, tool=test_permissions.DELETE)
 HOOK_OTHER = mcp_tool_name(server=GUARD, tool=test_permissions.LIST)
+# case id: (mode, tool name, exit code, permissionDecision on stdout or None for no stdout, logged action)
 GUARD_HOOK_CASES = {
-    "deny": ("deny", HOOK_TARGET, 0, test_permissions.ACTION_DENY, test_permissions.ACTION_DENY),
-    "ask": ("ask", HOOK_TARGET, 0, test_permissions.ACTION_ASK, test_permissions.ACTION_ASK),
-    "fail": ("fail", HOOK_TARGET, 1, None, test_permissions.ACTION_EXIT1),
-    "ask_other_tool": ("ask", HOOK_OTHER, 0, None, test_permissions.ACTION_PASS),
+    "deny": (test_permissions.HOOK_MODE_DENY, HOOK_TARGET, HOOK_EXIT_OK, DECISION_DENY, test_permissions.ACTION_DENY),
+    "ask": (test_permissions.HOOK_MODE_ASK, HOOK_TARGET, HOOK_EXIT_OK, DECISION_ASK, test_permissions.ACTION_ASK),
+    "fail": (test_permissions.HOOK_MODE_FAIL, HOOK_TARGET, HOOK_EXIT_FAIL, None, test_permissions.ACTION_EXIT1),
+    "ask_other_tool": (test_permissions.HOOK_MODE_ASK, HOOK_OTHER, HOOK_EXIT_OK, None, test_permissions.ACTION_PASS),
 }
 
 
