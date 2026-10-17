@@ -7,8 +7,8 @@ input>}.
 
 guard_hook_settings_args (D23/T9): one PreToolUse command hook with a
 given matcher that runs fakes/guard_hook.py, which logs every input with
-the action it took ("pass", "deny", "ask", "exit1") and denies, asks or
-fails one target tool.
+the action it took ("pass", "deny", "ask", "allow", "exit1") and denies,
+asks, allows or fails one target tool.
 """
 
 import json
@@ -35,8 +35,8 @@ def hook_settings_args(*, python, log_path, events):
 def guard_hook_settings_args(*, python, log_path, matcher, mode, target_tool, reason, handler_fields):
     """["--settings", <inline JSON>] with one PreToolUse command hook
     (fakes/guard_hook.py; D23/T9). matcher: the hook matcher, as written;
-    mode: "deny", "ask" or "fail" for target_tool (the full mcp__<server>__<tool>
-    name); reason: the permissionDecisionReason (deny, ask); handler_fields:
+    mode: "deny", "ask", "allow" or "fail" for target_tool (the full
+    mcp__<server>__<tool> name); reason: the permissionDecisionReason; handler_fields:
     more fields of the handler, e.g. {"onFailure": "block"}, {} for none."""
     command = " ".join(shlex.quote(part) for part in (python, GUARD_HOOK_SCRIPT, log_path, mode, target_tool, reason))
     handler = {"type": "command", "command": command}

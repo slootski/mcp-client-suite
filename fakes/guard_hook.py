@@ -12,9 +12,9 @@ exit 0 with no output lets the call go on). For the target tool:
   deny  prints {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
         "permissionDecisionReason": <reason>}} and exits 0 (action "deny"; hooks.md "PreToolUse decision
         control").
-  ask   the same with "permissionDecision": "ask" (action "ask"). hooks.md:1933-1934: "ask" prompts the
-        user; in a `-p` run where no one can answer, Claude Code denies the call, and Claude reads the
-        reason in the tool result.
+  ask   the same with "ask" (action "ask"); hooks.md:1934: in `-p` no one can answer the prompt, so the call is
+        denied and Claude reads the reason in the tool result.
+  allow the same with "allow" (action "allow"); hooks.md:1933: "allow" skips the permission prompt.
   fail  prints nothing to stdout, one line to stderr, and exits 1 (action "exit1"): a non-blocking
         error, unless the handler sets `onFailure: "block"` (hooks.md "Block the action when a hook fails").
 """
@@ -23,9 +23,9 @@ import json
 import sys
 import time
 
-TARGET_ACTIONS = {"deny": "deny", "ask": "ask", "fail": "exit1"}  # mode -> action for the target tool
+TARGET_ACTIONS = {"deny": "deny", "ask": "ask", "allow": "allow", "fail": "exit1"}  # mode -> target tool action
 MODES = tuple(TARGET_ACTIONS)
-DECISION_ACTIONS = ("deny", "ask")  # actions answered with a permissionDecision
+DECISION_ACTIONS = ("deny", "ask", "allow")  # actions answered with a permissionDecision
 FAIL_EXIT_CODE = 1
 USAGE_EXIT_CODE = 3  # not 2: exit 2 is a blocking error on PreToolUse
 
