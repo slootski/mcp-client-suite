@@ -23,6 +23,28 @@ results out, and exits with the suite's exit code. Docker must be
 installed and running, with Linux containers; `./run.sh` checks this first
 and, if it is not, stops with exit 16 and says what to install or start.
 
+On a new machine:
+
+- **No Python needed on the host.** Python and pytest are in the image.
+- **git:** on a new Mac, the first `git` asks to install the Xcode Command
+  Line Tools.
+- **The first build downloads** the base image, Debian packages, pytest
+  and Claude Code (the image is about 800 MB on disk), so it takes a few
+  minutes. Later
+  builds use the cache.
+- **Behind a proxy or VPN,** set the proxy in Docker Desktop (Settings,
+  Resources, Proxies). If the build cannot download, `./run.sh` says so
+  and exits with Docker's code.
+- **With the key, keep the Mac awake** for the 5-6 min run:
+  `caffeinate -i ./run.sh`. A model attempt that spans a sleep is
+  inconclusive and retried; one that stays inconclusive makes the run
+  exit 13.
+
+Checked on 2026-10-17: a fresh `git clone`, a build with `--no-cache`,
+and `./run.sh` in a shell with only Docker on `PATH` and no key: 114
+passed, 1 xfailed, 0 failed, exit 0 (run `20261017T183353Z-93790`; the
+base image was already on the Mac, so the build took 23 s).
+
 | What | Command |
 |---|---|
 | Everything | `./run.sh` |
@@ -150,13 +172,15 @@ xfail; read in the changelog, proven on 2.1.296; they should XPASS on
 
 Measured on an Apple silicon Mac with Docker Desktop, image layers cached.
 
-- **With the key** (run `20261017T161458Z-93821`): 159 items: 84 run
-  Claude Code, 75 self-test the harness. 152 passed, 7 xfailed
-  (findings 1, 3, 4, 5), 0 skipped, 0 failed, exit 0. pytest
-  took 5 min 25 s (the 4 idle-timeout items 33-35 s each). 43 `claude -p`
-  runs cost $0.090 (sum of `total_cost_usd`).
-- **Without a key** (run `20261017T161832Z-1138`): 110 passed, 1 xfailed
-  (finding 5), 48 model items skipped, exit 0; pytest took 56 s.
+- **With the key** (run `20261017T184642Z-2379`, the final check from a
+  fresh clone at `283c818`): 163 items: 84 run Claude Code, 79 self-test
+  the harness and `run.sh`. 156 passed, 7 xfailed (findings 1, 3, 4, 5),
+  0 skipped, 0 failed, exit 0. pytest took 5 min 29 s (the 4 idle-timeout
+  items 33 s each). 43 `claude -p` runs cost $0.090 (sum of
+  `total_cost_usd`).
+- **Without a key** (run `20261017T183353Z-93790`, fresh clone): 114
+  passed, 1 xfailed (finding 5), 48 model items skipped, exit 0; pytest
+  took 57 s.
 - **Budget.** Before each `claude -p` run: if the costs so far plus the
   per-run cap ($0.25) would pass `SUITE_BUDGET_USD` ($5.00), the run
   stops with exit 11.
@@ -273,7 +297,11 @@ and the log format: [docs/log-format.md](docs/log-format.md).
   depth; HTTP only through `claude mcp list/get`; no SSE, WebSocket, or
   OAuth login flow (`-p` cannot open a browser).
 - **Platform.** Linux container only, seen on Docker Desktop for Mac
-  (arm64); the base image pin is multi-arch.
+  (arm64); the base image pin is multi-arch. The amd64 image (an Intel
+  Mac or a Linux CI runner) was run only under emulation on Apple silicon
+  (`DOCKER_DEFAULT_PLATFORM=linux/amd64 ./run.sh -m free`, run
+  `20261017T183909Z-1354`): 114 passed, 1 xfailed, 0 failed, exit 0;
+  pytest took 2 min. Not run on a real Intel Mac.
 
 ## Layout
 

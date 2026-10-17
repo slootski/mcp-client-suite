@@ -24,6 +24,11 @@ transcripts.
    prompt ran on the repo. After each review, a repo-fix prompt was given
    to a new session, which ran Dev and QA agents in parallel units (rows
    38 and 39).
+6. **Final check before sending.** One more session (Session 4 below)
+   ran the suite the way the task mail asks, added the host check to
+   `run.sh` (exit 16) with its test, wrote
+   [docs/working-process.md](docs/working-process.md), and ran the full
+   suite from a fresh clone.
 
 ## Who wrote what
 
@@ -43,6 +48,9 @@ transcripts.
   - The logging rule (10-17 12:01 and 12:16). Build prompts 17 to 19
     turned it into code (`harness/check.py`).
   - The hiring-panel review of the repo (10-17 13:13).
+  - The final session (10-17 20:26 to 21:40): `master` as the project
+    branch, the host check in `run.sh`, the working-process doc, and the
+    last run before sending.
 - **Written by agents:** the code, the build prompts 01 to 19, the Dev
   and QA briefs of the fix rounds (not kept in the repo), and every
   version of the docs (README.md, PLAN.md, this file, `docs/`,
@@ -125,8 +133,36 @@ wrote build prompts 01 to 19 and ran the Dev and QA agents.
   future manager of the team. Improve the prompt; ask questions." This
   became the repo-review prompt (row 38).
 
-The three sessions hold 91 messages. 9 are above: the 4 lines that ran
-the plan-review prompt and the 5 decisions. The other 82 were short
-steering and status lines (what is running, how much was spent, open the
-report, set up git), plus one message that held the API key and one
-paste of another tool's output, dropped; they are not listed.
+### Session 4: final check before sending
+
+Claude Code session `8aadc9ce`, 2026-10-17 20:25 to 2026-10-17 21:53, 27
+messages. This session ran the suite as the task mail asks, made the
+last changes, and ran the final check. It used no prompt file; the
+messages below were the prompts.
+
+- 20:26 (paraphrased): "Find the mail from Boris that says how the
+  project should run, and start the project the way he asks."
+- 20:54 (paraphrased): "Create a doc that describes the working process:
+  going over the project with Claude to understand how it works,
+  splitting it into topics, implementing topic by topic, validating what
+  the report shows, running the review prompt with experts, and finally
+  committing and pushing. Ask me questions." This became
+  [docs/working-process.md](docs/working-process.md).
+- 21:01 (paraphrased): "`master` is the branch of the project; delete
+  `main`."
+- 21:10 (paraphrased): "Go over the packages and programs the run needs,
+  and make sure the script tells the user what to install, or that the
+  project cannot run." This became the host check in `run.sh` (exit 16)
+  and `tests/test_run_sh_host_check.py`.
+- 21:36 (paraphrased): "What can you do about what can still go wrong on
+  a plain Mac?" This became the amd64 run under emulation and the "On a
+  new machine" notes in the README.
+- 21:40 (paraphrased): "Run the last test before sending." This was the
+  full run from a fresh clone, run `20261017T184642Z-2379`.
+
+The four sessions hold 118 messages. 15 are above: the 4 lines that ran
+the plan-review prompt and the 11 decisions. The other 103 were short
+steering, status and how-it-works questions (what is running, how much
+was spent, open the report, set up git, how a run works), plus two
+messages that held the API key and one paste of another tool's output,
+dropped; they are not listed.
