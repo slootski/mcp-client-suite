@@ -31,6 +31,55 @@ results out, and exits with the suite's exit code.
 With `-k`, an S rate item (`..._s_rate`) needs all 5 repeats in the same
 run; with fewer, it is skipped as inconclusive. Results: [Results](#results).
 
+## How a run works
+
+On the host (`run.sh`):
+
+1. `docker build` makes the image: Claude Code 2.1.296, Python, pytest,
+   `bubblewrap` (`Dockerfile`).
+2. `docker create` makes the container, as the host user. It does not start
+   yet.
+3. If `ANTHROPIC_API_KEY` is set, the key goes in as a 0600 file by
+   `docker cp`. It is never passed with `-e`, so `docker inspect` cannot
+   show it. The host copy is deleted at once.
+4. `docker start --attach` runs the suite. pytest output shows live.
+5. `docker cp` copies the results to `./artifacts/<run-id>/`. The script
+   exits with pytest's exit code.
+
+In the container (`harness/entrypoint.py`):
+
+1. Read the key file, delete it, and give the key to the pytest process
+   only.
+2. Run pytest under a hard cap for the whole run (`pytest.ini`: 120 s per
+   test, 1500 s per run).
+3. Scan every output file for the API key and the dummy test credentials.
+   A file with a leak is not kept. The scan result goes to
+   `secret-scan.json`.
+
+In one test:
+
+- Each test gets a fresh config dir and `HOME`. No state is shared between
+  tests.
+- The test starts fake MCP servers (`fakes/`): stdio as a subprocess of
+  `claude`, HTTP on a port. Env vars set their behavior (normal, crash,
+  hang, error, 401). Each fake logs every JSON-RPC message (the wire log).
+- Free tests (`-m free`) run `claude mcp add/list/get` and check
+  connection, handshake, auth and credentials. No model call, no cost.
+- Model tests (`-m model`) run `claude -p "<prompt>" --output-format
+  stream-json --strict-mcp-config --mcp-config ...` with a pinned model and
+  a cost cap (`harness/model_run.py`).
+- The checks compare the `tool_use` and `tool_result` in the stream with
+  the `tools/call` in the wire log. The fake returns a fresh token per test,
+  and the answer must carry it.
+- Model-choice tests run 5 times and need at least 4 passes
+  (`harness/repeat.py`).
+- Known 2.1.296 defects are strict xfails: when one starts to pass, the run
+  fails.
+
+Output per run, in `./artifacts/<run-id>/`: `report.html`, `junit.xml`,
+`cost.json`, `s-rates.json`, `secret-scan.json`, and one folder per test
+(`run.json`, wire logs, debug log, command transcripts).
+
 ## How it checks
 
 - **The oracle is the fake server's own log** (the wire log). The fakes
@@ -230,7 +279,7 @@ and the log format: [docs/log-format.md](docs/log-format.md).
 ├── harness/            run `claude`, model-run flow, checks, cost, secret scan
 ├── fakes/              scriptable stdio and HTTP MCP servers; hook scripts
 ├── tests/              the tests; tests/data/ holds recorded runs
-├── docs/               flake policy, log format, exit codes
+├── docs/               flake policy, log format, exit codes, working process
 ├── evidence/           one-off probes cited in observations.md
 ├── prompts/            plan/, plan-review/, repo-review/, build prompts 01-19
 ├── observations.md     what 2.1.296 did, with dates and evidence
