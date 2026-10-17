@@ -402,7 +402,9 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   "Automatic reconnection", so it is about eager reconnects, which 2.1.296
   does not do; the lazy restart is what the 2026-07-28 spec asks. A doc
   gap, not a defect: a strict xfail would only pass if the client got
-  worse. `run.json` key `observations.documented_no_restart`.
+  worse. `run.json` key `observations.documented_no_restart`. The later
+  call's success on a new process is a hard assert, so a client that
+  stops restarting fails; the doc line's spawn count is recorded.
 - Doc 20 test 2 (a crash while idle) was not seen: the fake only exits
   with a call in flight.
 - Evidence: `artifacts/20261017T062932Z-22649/tests/tests_test_crash.py_*`
@@ -608,7 +610,7 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   the spec's MUST to publish protected resource metadata). `claude mcp list`
   and `get` show `✘ Failed to connect — Dynamic Client Registration rejected
   (HTTP 404)`, not `! Needs authentication`.
-- Differs from: mcp.md:762 ("either status code flags it in `/mcp`"), which
+- Differs from: mcp.md:764 ("either status code flags it in `/mcp`"), which
   does not depend on OAuth metadata.
 - Test: `tests/test_status_matrix.py::test_http_bare_401_out_of_spec_server_status_recorded`
   (named `test_http_bare_401_no_header_needs_authentication` before commit
@@ -620,7 +622,7 @@ run the named test with `./run.sh -k <test>` to get your own copy in
 - Now recorded, not xfailed (commit 4188004): the server breaks the spec
   MUST to publish Protected Resource Metadata (2025-11-25
   basic__authorization.md:65), and the client follows the spec's fallback
-  and reports what it got. mcp.md:762 assumes an OAuth server. So the
+  and reports what it got. mcp.md:764 assumes an OAuth server. So the
   status is compared with the doc line record-only (`run.json` key
   `observations.documented_bare_401_status`); a compliant server (401 with
   metadata) gets `! Needs authentication` and
