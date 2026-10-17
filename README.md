@@ -19,7 +19,9 @@ export ANTHROPIC_API_KEY=...        # the key you were given
 ```
 
 `./run.sh` builds the image, runs the tests in a container, copies the
-results out, and exits with the suite's exit code.
+results out, and exits with the suite's exit code. Docker must be
+installed and running, with Linux containers; `./run.sh` checks this first
+and, if it is not, stops with exit 16 and says what to install or start.
 
 | What | Command |
 |---|---|
@@ -35,6 +37,9 @@ run; with fewer, it is skipped as inconclusive. Results: [Results](#results).
 
 On the host (`run.sh`):
 
+0. Check the host: `docker` on `PATH`, its daemon reachable, Linux
+   containers. On a miss, stop with exit 16 and say what to install or
+   start. Nothing is built or written.
 1. `docker build` makes the image: Claude Code 2.1.296, Python, pytest,
    `bubblewrap` (`Dockerfile`).
 2. `docker create` makes the container, as the host user. It does not start
@@ -178,6 +183,7 @@ permission and hook tests, and the repeats.
 | 13 | The key is set and at least one model item was skipped as inconclusive |
 | 14 | No key, but model items were asked for (`SUITE_REQUIRE_KEY=1`, a `-m` that selects a model item, or only model items selected); no test runs |
 | 15 | The Anthropic API rejected the key or the account (HTTP 401 or 403); the run stops at the first model run, no retry |
+| 16 | The host is not ready: no `docker`, the Docker daemon not reachable, or not Linux containers. The message says what to install or start; nothing is built |
 
 10 (wrong version), 11 (budget) and the rest: [docs/exit-codes.md](docs/exit-codes.md).
 
@@ -235,7 +241,7 @@ and the log format: [docs/log-format.md](docs/log-format.md).
 | Need | State |
 |---|---|
 | A test view | **in the code**: `junit.xml` (strict xfails show as `skipped`); `outcomes.json` keeps them apart |
-| Two jobs: `free` (no key, about 1 min, 111 items) on every change; `model` nightly or on a PR label | **markers in the code** (`-m free`, `-m model`); the job definitions are not written |
+| Two jobs: `free` (no key, about 1 min, 115 items) on every change; `model` nightly or on a PR label | **markers in the code** (`-m free`, `-m model`); the job definitions are not written |
 | The key as a secret of the model job only; a missing one must not go green | **in the code**: with `SUITE_REQUIRE_KEY=1` a missing key exits 14; a rejected key exits 15 |
 | Budget guard | **in the code** (exit 11); CI would add a monthly cap |
 | Quarantine for flaky S items (test id, owner, end date) | **not in the code**: an S rate under 4/5 fails the run |

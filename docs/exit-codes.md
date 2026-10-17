@@ -16,8 +16,9 @@ full table. `./run.sh` exits with the suite's exit code.
 | 13 | The key is set and at least one model item was skipped as inconclusive (pytest itself returned 0; the list is printed under "model tier verdict" and is in `outcomes.json`). Two consequences: a `-k` that leaves an S rate item or `test_stdio_crash_mid_call_same_every_run` without its runs exits 13; and one repeat item that stays inconclusive after its retry (the model made no call) makes the run exit 13 even when its S rate item passes (e.g. 4/5) | `tests/conftest.py` |
 | 14 | No key, and model items were asked for; no test runs. Three triggers: `SUITE_REQUIRE_KEY=1` (whatever is selected, so `SUITE_REQUIRE_KEY=1 ./run.sh -m free` exits 14 too); a `-m` expression that selects at least one model item (e.g. `./run.sh -m model`); or every selected item is a model item (at least one), e.g. `./run.sh -k test_round_trip_echo_canary`. Without any of them, plain `./run.sh`, `./run.sh -m free` and a mixed `-k` selection exit 0 with no key, model items skipped | `tests/conftest.py` |
 | 15 | The Anthropic API rejected the key or the account (HTTP 401 or 403, e.g. a bad key or a billing error); the run stops at the first model run, no retry. The message starts `API key rejected:` | `harness/model_flow.py`, `harness/model_checks.py` (`key_rejected`) |
+| 16 | The host is not ready; nothing is built. Three triggers, each with a message that says what to install or start: no `docker` on `PATH`; the Docker daemon is not reachable (`docker version` fails: Docker Desktop not started, the Linux service down, or the user not allowed to use it); the daemon runs other than Linux containers | `run.sh` |
 | 124, 137 | The whole-run cap (1800 s, coreutils `timeout`) stopped pytest; 137 if it had to be killed after the 30 s grace | entrypoint |
-| other | `docker build` or `docker create` failed; `run.sh` exits with Docker's code | `run.sh` (`set -e`) |
+| other | `docker build` failed (`run.sh` adds a hint: network access, free disk space) or `docker create` failed; `run.sh` exits with Docker's code | `run.sh` |
 
 Checked with no key on 2026-10-17: `./run.sh -m model` and `./run.sh -k
 test_round_trip_echo_canary` exit 14; `SUITE_REQUIRE_KEY=1 ./run.sh -m
@@ -25,3 +26,12 @@ free` exits 14; `SUITE_REQUIRE_KEY=yes ./run.sh` exits 4; `./run.sh -k
 no_such_test_zz` exits 5; plain `./run.sh` exits 0. With a made-up key,
 `./run.sh -k test_round_trip_echo_canary` exits 15 after one `claude -p`
 run ($0; run `20261017T141626Z-9815`).
+
+Checked on the host on 2026-10-17, with macOS `/bin/bash` 3.2 and
+`PATH=/usr/bin:/bin:/usr/sbin:/sbin`: with no docker on `PATH`, `./run.sh`
+exits 16 (before this check it exited 127 with `docker: command not
+found`); with a fake `docker` whose `docker version` fails, or reports
+`windows`, it exits 16; with one whose `docker build` exits 1, it exits 1
+with the build hint. No `./artifacts/<run-id>/` was made in any case.
+`tests/test_run_sh_host_check.py` runs the same four cases in the
+container on every run.

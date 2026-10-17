@@ -5,6 +5,8 @@
 !fakes
 !tests
 !pytest.ini
+# run.sh only for tests/test_run_sh_host_check.py, which runs it with a fake docker.
+!run.sh
 # After the allow lines, so a listed secret or cache pattern inside an
 # allowed folder is still excluded.
 **/__pycache__

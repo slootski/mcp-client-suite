@@ -5,7 +5,8 @@
 #   ./run.sh -m free         # extra arguments go to pytest
 #   SUITE_REQUIRE_KEY=1 ./run.sh   # fail (exit 14) instead of skipping model tests when no key is set
 #
-# Needs only Docker. ANTHROPIC_API_KEY is read from this shell when set; it
+# Needs only Docker, running Linux containers; without it the script stops
+# with exit 16 and says what to install or start. ANTHROPIC_API_KEY is read from this shell when set; it
 # may be unset, and the free tests still run. SUITE_REQUIRE_KEY (not a
 # secret) is forwarded into the container with -e when it is set here
 # (tests/conftest.py: unset or "" = off, "1" = on).
@@ -44,6 +45,29 @@ if [ -L artifacts ]; then
   exit 2
 fi
 
+# Host check, before anything is written or built: the host needs only
+# Docker, and its daemon must run Linux containers. Each miss stops the run
+# with exit 16 and says what to install or start. The other programs used
+# here (mktemp, sed, date, id, readlink, grep) come with macOS and Linux.
+HOST_NOT_READY_EXIT_CODE=16
+if ! command -v docker >/dev/null 2>&1; then
+  echo "run.sh: docker not found on PATH. The suite runs in Docker and needs nothing else on the host." >&2
+  echo "run.sh: install Docker (Docker Desktop on macOS or Windows, Docker Engine on Linux: https://docs.docker.com/get-docker/), start it, and run ./run.sh again." >&2
+  exit "$HOST_NOT_READY_EXIT_CODE"
+fi
+# `docker version` fails at once when the daemon is down; `docker info` can
+# hang while Docker Desktop starts.
+if ! DOCKER_SERVER_OS="$(docker version --format '{{.Server.Os}}' 2>/dev/null)"; then
+  echo "run.sh: docker is installed but its daemon is not reachable." >&2
+  echo "run.sh: start Docker Desktop (macOS, Windows), or on Linux start the service (sudo systemctl start docker) and check that your user may use it (the docker group). Then run ./run.sh again." >&2
+  exit "$HOST_NOT_READY_EXIT_CODE"
+fi
+if [ "$DOCKER_SERVER_OS" != "linux" ]; then
+  echo "run.sh: the Docker daemon runs '$DOCKER_SERVER_OS' containers; the suite needs Linux containers." >&2
+  echo "run.sh: switch Docker Desktop to Linux containers, then run ./run.sh again." >&2
+  exit "$HOST_NOT_READY_EXIT_CODE"
+fi
+
 # Cleanup before anything that needs it: the key file, the image-ID file,
 # the container. Installed before the build, so a failed build still
 # removes the image-ID dir.
@@ -62,7 +86,14 @@ trap cleanup EXIT
 # shared tag between this build and `docker create`, and run.json would
 # then record an image that did not run.
 IID_DIR="$(umask 077 && mktemp -d)"
+set +e
 docker build --iidfile "$IID_DIR/iid" -t "$IMAGE" .
+build_rc=$?
+set -e
+if [ "$build_rc" -ne 0 ]; then
+  echo "run.sh: docker build failed (exit $build_rc). The build downloads the base image, Debian packages, pytest and Claude Code: check network access and free disk space." >&2
+  exit "$build_rc"
+fi
 IMAGE_ID="$(cat "$IID_DIR/iid")"
 if [ -z "$IMAGE_ID" ]; then
   echo "run.sh: docker build wrote no image ID" >&2
