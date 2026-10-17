@@ -43,8 +43,10 @@ transcripts.
   - The logging rule (10-17 12:01 and 12:16). Build prompts 17 to 19
     turned it into code (`harness/check.py`).
   - The hiring-panel review of the repo (10-17 13:13).
-- **Written by agents:** the code, the build prompts 01 to 19, and every
-  version of the docs (README.md, PLAN.md, this file).
+- **Written by agents:** the code, the build prompts 01 to 19, the Dev
+  and QA briefs of the fix rounds (not kept in the repo), and every
+  version of the docs (README.md, PLAN.md, this file, `docs/`,
+  observations.md).
 
 ## The prompts, in order
 

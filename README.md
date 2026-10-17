@@ -53,6 +53,10 @@ run; with fewer, it is skipped as inconclusive. Results: [Results](#results).
   with one fact broken at a time, to prove each check can fail.
   `tests/test_gate.py` checks exits 13, 14 and 15 (pytest inside pytest,
   and replays with the API's rejection written in).
+  `tests/test_secret_controls.py` does the same for the secret controls.
+- **Host pauses.** A model attempt whose wall clock jumps more than 5 s
+  past its monotonic time (e.g. a Mac that sleeps) is inconclusive and
+  retried, so a pause does not fail a timing check.
 
 ## What the suite shows
 
@@ -93,13 +97,10 @@ xfail; read in the changelog, proven on 2.1.296; they should XPASS on
 Measured on an Apple silicon Mac with Docker Desktop, image layers cached.
 
 - **With the key** (run `20261017T141534Z-2243`): 132 items: 81 run
-  Claude Code, 51 self-test the harness (`tests/test_harness_offline.py`,
-  `tests/test_gate.py`, `tests/test_secret_controls.py`). 125 passed,
-  7 xfailed (findings 1, 3, 4, 5), 0 skipped, 0 failed, exit 0. pytest
+  Claude Code, 51 self-test the harness. 125 passed, 7 xfailed
+  (findings 1, 3, 4, 5), 0 skipped, 0 failed, exit 0. pytest
   took 5 min 26 s (the 4 idle-timeout items 33-35 s each). 40 `claude -p`
-  runs cost $0.086 (sum of `total_cost_usd`). A host pause (a Mac that
-  sleeps) does not fail a timing check: an attempt whose wall clock jumps
-  more than 5 s past its monotonic time is inconclusive and retried.
+  runs cost $0.086 (sum of `total_cost_usd`).
 - **Without a key** (run `20261017T134601Z-88212`): 86 passed, 1 xfailed
   (finding 5), 45 model items skipped, exit 0; pytest took 56 s.
 - **Budget.** Before each `claude -p` run: if the costs so far plus the

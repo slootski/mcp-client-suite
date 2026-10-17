@@ -582,8 +582,9 @@ run the named test with `./run.sh -k <test>` to get your own copy in
   `permission_denied` system event for it (`decision_reason_type`
   "asyncAgent"). This matches hooks.md:1934 and headless.md:333. Unlike a
   hook `deny` (no event), a hook `ask` is a denied prompt, so it shows in
-  both places. The test asserts the denial and the reason; the event and
-  `permission_denials` are recorded only.
+  both places. The test asserts the denial, the reason and the one
+  `permission_denied` event (every other T9 case asserts none);
+  `permission_denials` is recorded only.
 
 ## 2026-10-17, step 6 model spend
 
