@@ -1,5 +1,7 @@
 # MCP client test suite for Claude Code 2.1.296
 
+This repository is my home assignment (take-home task) for bay.io: a home test / interview assignment to build a test suite for the MCP client in Claude Code.
+
 A black-box test suite for the MCP client inside Claude Code 2.1.296. Claude
 Code runs in Docker. Small fake MCP servers log every message they get, and
 the tests check that log, the `claude` CLI output and the `claude -p`
